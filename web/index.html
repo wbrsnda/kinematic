@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Real-time Image Data Stream</title>
+    <style>
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #f0f0f0;
+        }
+        canvas {
+            border: 1px solid black;
+        }
+        .debug-panel {
+            position: absolute;
+            top: 20px;
+            width: 200px;
+            padding: 10px;
+            background-color: rgba(255,255,255,0.9);
+            border: 1px solid #ccc;
+            font-family: monospace;
+            font-size: 14px;
+            line-height: 1.4;
+            z-index: 5;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+    <div id="leftDebugPanel" class="debug-panel" style="left: 10px;"></div>
+    <canvas id="imageCanvas" width="800" height="600"></canvas>
+    <div id="rightDebugPanel" class="debug-panel" style="right: 10px;"></div>
+    <script type="module" src="assets/pose_estimation.js"></script>
+    <script defer src="main.dart.js" type="application/javascript"></script> 
+</body>
+</html>
+
+
+
