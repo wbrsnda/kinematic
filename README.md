@@ -5,13 +5,6 @@
   1. **安装 Flutter SDK** ：从[Flutter 官方网站](https://flutter.dev)下载最新版本的 Flutter SDK，并按照官方指南进行安装。
   2. **配置环境变量** ：将 Flutter SDK 的`bin`目录添加到系统的环境变量`PATH`中，以便在命令行中可以全局使用 Flutter 命令。
 
-## 克隆项目
-
-在命令行中运行以下命令，将项目从 Git 仓库克隆到本地：
-
-```bash
-git clone http://10.1.16.174:3000/402_Laboratory/Kinematic_Jump_Flutter.git
-```
 
 ## 安装依赖
 
