@@ -436,7 +436,7 @@ function triggerFaceRecognition(side) {
 
   // 转 Base64、调用接口
   const faceImage = temp.toDataURL('image/jpeg', 0.8);
-  fetch('http://10.1.20.214:9000/extract', {
+  fetch('http://10.1.20.203:9000/extract', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ side, image: faceImage })
