@@ -28,12 +28,12 @@ int box2Height = 480;
 
 // 动画时长参数
 int playerAnimationDuration = 3; // 玩家进度条动画时长(秒)
-int gameAnimationDuration = 10;   // 游戏进度条动画时长(秒)
+int gameAnimationDuration = 8;   // 游戏进度条动画时长(秒)
 
 // 阶段全局参数
 int gameplayDuration = 60; // 游戏阶段时长(秒)
-int bufferDuration = 5;    // 缓冲阶段时长(秒)
-int settlementCountdown = 20; // 结算倒计时(秒)
+int bufferDuration = 3;    // 缓冲阶段时长(秒)
+int settlementCountdown = 10; // 结算倒计时(秒)
 
 // 图像数据
 VideoFrameData? currentFrameImageData;

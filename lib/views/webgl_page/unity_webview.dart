@@ -116,7 +116,7 @@ class _UnityWebViewPageState extends State<UnityWebViewPage> {
   });
 
   // 2) 2 秒后一次性发送配置参数
-  Timer(const Duration(seconds: 2), () {
+  Timer(const Duration(seconds: 1), () {
     final configData = {
       'box1PosX': box1PosX,
       'box1PosY': box1PosY,

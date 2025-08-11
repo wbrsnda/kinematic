@@ -415,6 +415,40 @@ function endedPhase() {
 }
 
 /**
+ * 纯人脸登录功能（与特征提取完全解耦）
+ * @param {Array} faceFeature - 人脸特征数组(从其他接口获得)
+ * @returns {Promise<Object>} - 返回接口原始响应
+ */
+async function faceLogin(faceFeature) {
+  if (!Array.isArray(faceFeature) || faceFeature.length === 0) {
+    return {
+      code: 400,
+      message: "无效的人脸特征数据"
+    };
+  }
+
+  try {
+    const response = await fetch("http://10.1.20.216:8080/auth/login/face", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        faceFeature: faceFeature // 确保字段名与后台一致
+      }),
+    });
+
+    // 直接返回原始响应，不处理业务逻辑
+    return await response.json();
+  } catch (error) {
+    console.error("[人脸登录] 网络请求异常:", error);
+    return {
+      code: 500,
+      message: "网络连接失败"
+    };
+  }
+}
+/**
  * side: 'left' 或 'right'
  * 你可以根据 side 去从离屏 Canvas 上裁剪对应区域的 JPEG，再发给后端识别
  */
@@ -445,6 +479,14 @@ function triggerFaceRecognition(side) {
     .then(res => {
       console.log(`人脸识别 (${side}) 返回：`, res);
       // TODO: 根据返回结果做后续处理
+      faceLogin(res.embedding)
+        .then(loginResult => {
+          console.log("登录结果:", loginResult);
+          // 这里处理登录成功/失败逻辑
+        })
+        .catch(error => {
+          console.error("登录流程异常:", error);
+        });
     })
     .catch(err => console.error('人脸识别接口调用失败：', err));
 }
