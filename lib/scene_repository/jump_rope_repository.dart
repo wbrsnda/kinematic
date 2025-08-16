@@ -39,8 +39,6 @@ class JumpRopeRepository extends BaseRepository {
   int bufferDuration = 5;  // 缓冲阶段时长(秒)
   int settlementCountdown = 10; // 结算倒计时(秒)
 
-  // MARK: - 原有参数
-
   /// video image of the current frame
   video_capture.VideoFrameData? curframeData;
 
@@ -52,6 +50,35 @@ class JumpRopeRepository extends BaseRepository {
 
   /// Get the 'ready' information
   JumpRopeReadyInformation get jumpRopeReadyInformation => _jumpRopeReadyInformation;
+
+  /// 将 Unity 框参数转换为归一化 ROI 参数
+  Map<String, double> getNormalizedRoi(int posX, int posY, int width, int height) {
+    // Unity 的总屏幕尺寸为 800x600
+    const unityScreenWidth = 800.0;
+    const unityScreenHeight = 600.0;
+    
+    // Unity 坐标系中心点是 (0,0)，我们需要转换成左上角为(0,0)
+    // 转换 x 坐标: 从 [-400, 400] 到 [0, 800]
+    final screenX = posX + unityScreenWidth / 2;
+    final screenY = unityScreenHeight / 2 - posY;
+
+    final boxLeft = screenX - width / 2;
+    final boxTop = screenY - height / 2;
+    final boxRight = screenX + width / 2;
+    final boxBottom = screenY + height / 2;
+
+    final normalizedLeft = boxLeft / unityScreenWidth;
+    final normalizedTop = boxTop / unityScreenHeight;
+    final normalizedRight = boxRight / unityScreenWidth;
+    final normalizedBottom = boxBottom / unityScreenHeight;
+    
+    return {
+      'left': normalizedLeft,
+      'top': normalizedTop,
+      'right': normalizedRight,
+      'bottom': normalizedBottom,
+    };
+  }
 
   /// {@macro free_repository}
   @override
@@ -92,6 +119,8 @@ class JumpRopeRepository extends BaseRepository {
     _jumpRopeReadyInformation.hasBodyInRightBox = false;
     _jumpRopeReadyInformation.bodyDurationInRightBox = 0;
   }
+
+  
 }
 
 /// Represents information for the 'ready' sub-feature

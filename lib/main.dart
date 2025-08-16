@@ -61,6 +61,19 @@ void _sendGameConfig() {
   // 获取 JumpRopeRepository 的单例实例
   final repository = JumpRopeRepository();
   try {
+    // 调用转换函数来获取 ROI 参数
+    final box1Roi = repository.getNormalizedRoi(
+      repository.box1PosX,
+      repository.box1PosY,
+      repository.box1Width,
+      repository.box1Height,
+    );
+    final box2Roi = repository.getNormalizedRoi(
+      repository.box2PosX,
+      repository.box2PosY,
+      repository.box2Width,
+      repository.box2Height,
+    );
     final configMap = {
       // 通过 repository 实例访问参数
       'playerAnimationDuration': repository.playerAnimationDuration * 1000,
@@ -68,6 +81,8 @@ void _sendGameConfig() {
       'gameplayDuration':        repository.gameplayDuration        * 1000,
       'bufferDuration':          repository.bufferDuration          * 1000,
       'settlementCountdown':     repository.settlementCountdown     * 1000,
+      'roi1': { 'left': box1Roi['left'], 'top': box1Roi['top'], 'right': box1Roi['right'], 'bottom': box1Roi['bottom'] },
+      'roi2': { 'left': box2Roi['left'], 'top': box2Roi['top'], 'right': box2Roi['right'], 'bottom': box2Roi['bottom'] },
     };
     print('⚙️ configMap = $configMap');
 
