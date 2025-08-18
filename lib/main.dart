@@ -8,23 +8,9 @@ import 'package:jumping_game/features/command_factory.dart';
 import 'package:jumping_game/scene_repository/repository_factory.dart';
 import 'package:jumping_game/test/command_test.dart';
 import 'dart:convert';
-
+import 'package:jumping_game/scene_repository/jump_rope_repository.dart';
 import 'package:jumping_game/views/webgl_page/unity_webview.dart'; 
-import 'package:jumping_game/unity/simple_parameters.dart' as params;
 
-
-
-bool hasPerson1 = false;
-bool hasPerson2 = false;
-
-bool isPrepared1 = false;
-bool isPrepared2 = false;
-
-bool gameStarting = false;
-bool gameEnded = true;
-
-int jumpCount1 = 0;
-int jumpCount2 = 0;
 
 void main() async {
   runApp(const MyApp());
@@ -72,26 +58,42 @@ void main() async {
 // 封装发送游戏配置的逻辑
 void _sendGameConfig() {
   print('⚙️ 准备发送游戏配置… (在 Canvas 初始化之前)');
+  // 获取 JumpRopeRepository 的单例实例
+  final repository = JumpRopeRepository();
   try {
+    // 调用转换函数来获取 ROI 参数
+    final box1Roi = repository.getNormalizedRoi(
+      repository.box1PosX,
+      repository.box1PosY,
+      repository.box1Width,
+      repository.box1Height,
+    );
+    final box2Roi = repository.getNormalizedRoi(
+      repository.box2PosX,
+      repository.box2PosY,
+      repository.box2Width,
+      repository.box2Height,
+    );
     final configMap = {
-      'playerAnimationDuration': params.playerAnimationDuration * 1000,
-      'gameAnimationDuration':   params.gameAnimationDuration   * 1000,
-      'gameplayDuration':        params.gameplayDuration        * 1000,
-      'bufferDuration':          params.bufferDuration          * 1000,
-      'settlementCountdown':     params.settlementCountdown     * 1000,
+      // 通过 repository 实例访问参数
+      'playerAnimationDuration': repository.playerAnimationDuration * 1000,
+      'gameAnimationDuration':   repository.gameAnimationDuration   * 1000,
+      'gameplayDuration':        repository.gameplayDuration        * 1000,
+      'bufferDuration':          repository.bufferDuration          * 1000,
+      'settlementCountdown':     repository.settlementCountdown     * 1000,
+      'roi1': { 'left': box1Roi['left'], 'top': box1Roi['top'], 'right': box1Roi['right'], 'bottom': box1Roi['bottom'] },
+      'roi2': { 'left': box2Roi['left'], 'top': box2Roi['top'], 'right': box2Roi['right'], 'bottom': box2Roi['bottom'] },
     };
     print('⚙️ configMap = $configMap');
 
-    // <<<<<<< 关键修改: 将 Map 编码为 JSON 字符串
     final jsonString = jsonEncode(configMap);
     print('⚙️ 发送 JSON 字符串到 JavaScript：$jsonString');
     js.context.callMethod('updateGameConfig', [jsonString]);
-    // >>>>>>>
 
     print('⚙️ 已发送游戏配置到 JavaScript (成功)');
   } catch (e) {
     print('❌ updateGameConfig 调用失败 (在 Canvas 初始化之前)：$e');
-    print('DEBUG: params values - playerAnimationDuration: ${params.playerAnimationDuration}, gameAnimationDuration: ${params.gameAnimationDuration}, gameplayDuration: ${params.gameplayDuration}, bufferDuration: ${params.bufferDuration}, settlementCountdown: ${params.settlementCountdown}');
+    print('DEBUG: params values - playerAnimationDuration: ${repository.playerAnimationDuration}, gameAnimationDuration: ${repository.gameAnimationDuration}, gameplayDuration: ${repository.gameplayDuration}, bufferDuration: ${repository.bufferDuration}, settlementCountdown: ${repository.settlementCountdown}');
   }
 }
 
