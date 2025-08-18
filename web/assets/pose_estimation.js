@@ -317,8 +317,7 @@ function registrationPhase() {
         st.isLocked = true; // 完成注册，标记为已锁定
         initBaseline(st);
         console.log(`玩家 '${side}' 已锁定!`);
-        const recognitionSide = side === 'left' ? 'right' : 'left';
-        triggerFaceRecognition(recognitionSide);
+        triggerFaceRecognition(side);
       }
     } else {
       // 如果手放下，则重置准备状态
