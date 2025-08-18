@@ -2,13 +2,11 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:jumping_game/data_stream/video_stream_capture.dart';
-import 'package:jumping_game/scene_repository/jump_rope_repository.dart';
 import 'package:jumping_game/features/command_factory.dart';
 import 'package:jumping_game/features/base_command.dart';
 import 'dart:html' as html; 
 import 'dart:async';
 import 'package:jumping_game/unity/simple_parameters.dart'; 
-
 
 class UnityWebViewPage extends StatefulWidget {
   const UnityWebViewPage({super.key});
@@ -20,16 +18,45 @@ class UnityWebViewPage extends StatefulWidget {
 class _UnityWebViewPageState extends State<UnityWebViewPage> {
   final JumpRopeReadyCommand _jumpRopeReadyCommand = CommandFactory.jumpRopeReadyCommand;
   html.IFrameElement? _iframe;
-  Timer? _timer;
+  Timer? _playerDataTimer; // 玩家数据计时器
   html.CanvasElement? _cameraCanvas;
   bool _cameraCanvasInitialized = false;
+  
+  // 状态变量
+  bool _unityReady = false; // Unity是否已初始化完成
+  bool _configSent = false; // 配置是否已发送
+  final List<String> _messageQueue = []; // 消息队列
+  late final String _configJson; // 预先生成的配置JSON
 
   @override
   void initState() {
     super.initState();
+    
+    // 预先生成配置JSON
+    final configData = {
+      'box1PosX': repository.box1PosX,
+      'box1PosY': repository.box1PosY,
+      'box1Width': repository.box1Width,
+      'box1Height': repository.box1Height,
+      'box2PosX': repository.box2PosX,
+      'box2PosY': repository.box2PosY,
+      'box2Width': repository.box2Width,
+      'box2Height': repository.box2Height,
+      'playerAnimationDuration': repository.playerAnimationDuration,
+      'gameAnimationDuration': repository.gameAnimationDuration,
+      'gameplayDuration': repository.gameplayDuration,
+      'bufferDuration': repository.bufferDuration,
+      'settlementCountdown': repository.settlementCountdown,
+    };
+    _configJson = jsonEncode(configData);
+    
     WidgetsBinding.instance.addPostFrameCallback((_) => _attachUnity());
     _startCamera();
-    //获取web中的数据
+    
+    // 添加Unity就绪监听器
+    html.window.addEventListener('message', _handleUnityMessage);
+    
+    // 获取web中的数据
     html.window.onMessage.listen((html.MessageEvent event) {
       try {
         final raw = event.data;
@@ -55,8 +82,40 @@ class _UnityWebViewPageState extends State<UnityWebViewPage> {
     });
   }
 
-  void _attachUnity() {
+  // 处理Unity消息
+  void _handleUnityMessage(html.Event event) {
+    if (event is! html.MessageEvent) return;
+    final messageEvent = event as html.MessageEvent;
     
+    if (messageEvent.data == 'unity-ready') {
+      setState(() {
+        _unityReady = true;
+      });
+      print("收到Unity就绪消息");
+      
+      // 发送配置参数
+      _sendConfiguration();
+      
+      // 启动玩家数据定时器
+      _startPlayerDataTimer();
+      
+      // 发送队列中的消息
+      _flushMessageQueue();
+    }
+  }
+
+  // 发送队列中的消息
+  void _flushMessageQueue() {
+    if (_iframe == null || _iframe!.contentWindow == null) return;
+    
+    for (final message in _messageQueue) {
+      _iframe!.contentWindow!.postMessage(message, '*');
+      print("发送队列消息: $message");
+    }
+    _messageQueue.clear();
+  }
+
+  void _attachUnity() {
     // 创建Unity iframe
     _iframe = html.IFrameElement()
       ..id = 'unity-iframe'
@@ -72,12 +131,8 @@ class _UnityWebViewPageState extends State<UnityWebViewPage> {
     html.document.body?.append(_iframe!);
 
     _iframe!.onLoad.listen((_) {
-      // 在这里启动定时器，确保Unity实例已经加载完成
       print('Unity iframe 加载完成');
-
-
-
-      _startTimer();
+      // 不再在此启动定时器，等待Unity就绪消息
     });
   }
 
@@ -94,89 +149,81 @@ class _UnityWebViewPageState extends State<UnityWebViewPage> {
     }
   }
 
-  void _startTimer() {
-  // 1) 20 ms 玩家数据循环（立即启动）
-  _timer = Timer.periodic(const Duration(milliseconds: 20), (timer) {
-    final playerData = {
-      'hasPerson1': repository.hasPerson1,
-      'isPrepared1': repository.isPrepared1,
-      'jumpCount1': repository.jumpCount1,
-      'hasPerson2': repository.hasPerson2,
-      'isPrepared2': repository.isPrepared2,
-      'jumpCount2': repository.jumpCount2,
-      'gameStarting': repository.gameStarting,
-      'gameEnded': repository.gameEnded,
-    };
-    final playerJson = jsonEncode(playerData);
-    final iframe = html.document.getElementById('unity-iframe') as html.IFrameElement?;
-    if (iframe != null && iframe.contentWindow != null) {
-      iframe.contentWindow!.postMessage(playerJson, '*');
-      // print('定时器发送玩家数据: $playerJson');
+  // 启动玩家数据定时器
+  void _startPlayerDataTimer() {
+    _playerDataTimer = Timer.periodic(const Duration(milliseconds: 20), (timer) {
+      final playerData = {
+        'hasPerson1': repository.hasPerson1,
+        'isPrepared1': repository.isPrepared1,
+        'jumpCount1': repository.jumpCount1,
+        'hasPerson2': repository.hasPerson2,
+        'isPrepared2': repository.isPrepared2,
+        'jumpCount2': repository.jumpCount2,
+        'gameStarting': repository.gameStarting,
+        'gameEnded': repository.gameEnded,
+      };
+      final playerJson = jsonEncode(playerData);
+      
+      // 发送消息（如果Unity未准备好则加入队列）
+      _postMessage(playerJson);
+      
+      _displayCurrentFrame();
+    });
+  }
+
+  // 发送配置参数
+  void _sendConfiguration() {
+    if (_configSent) {
+      print('配置参数已发送过，跳过');
+      return;
     }
-    _displayCurrentFrame();
-  });
-
-  // 2) 2 秒后一次性发送配置参数
-  Timer(const Duration(seconds: 1), () {
-    final configData = {
-      'box1PosX': repository.box1PosX,
-      'box1PosY': repository.box1PosY,
-      'box1Width': repository.box1Width,
-      'box1Height': repository.box1Height,
-
-      'box2PosX': repository.box2PosX,
-      'box2PosY': repository.box2PosY,
-      'box2Width': repository.box2Width,
-      'box2Height': repository.box2Height,
-
-      'playerAnimationDuration': repository.playerAnimationDuration,
-      'gameAnimationDuration': repository.gameAnimationDuration,
-
-      'gameplayDuration': repository.gameplayDuration,
-      'bufferDuration': repository.bufferDuration,
-      'settlementCountdown': repository.settlementCountdown,
-    };
-    final configJson = jsonEncode(configData);
-    final iframe = html.document.getElementById('unity-iframe') as html.IFrameElement?;
-    if (iframe != null && iframe.contentWindow != null) {
-      iframe.contentWindow!.postMessage(configJson, '*');
-      print('延迟5秒后发送配置参数: $configJson');
+    
+    if (_iframe == null || _iframe!.contentWindow == null) {
+      print('Unity iframe 未准备好，无法发送配置');
+      return;
     }
-  });
-}
+    
+    try {
+      _iframe!.contentWindow!.postMessage(_configJson, '*');
+      _configSent = true;
+      print('配置参数发送成功');
+    } catch (e) {
+      print('配置参数发送失败: $e');
+    }
+  }
+
+  // 发送消息（处理Unity就绪状态）
+  void _postMessage(String message) {
+    if (_iframe == null || _iframe!.contentWindow == null) return;
+    
+    if (_unityReady) {
+      _iframe!.contentWindow!.postMessage(message, '*');
+      // print('发送玩家数据: $message');
+    } else {
+      // 如果Unity未准备好，将消息加入队列
+      _messageQueue.add(message);
+      // print('玩家数据加入队列: $message');
+    }
+  }
 
   void _displayCurrentFrame() {
-      final VideoFrameData? frameData = getCurrentFrameImageData();
-      if (frameData == null) return;
+    final VideoFrameData? frameData = getCurrentFrameImageData();
+    if (frameData == null) return;
 
-      _ensureCanvasInitialized(frameData.width, frameData.height);
-      final ctx = _cameraCanvas!.context2D;
-      
-      // 1. 创建一个临时的 Canvas 来存放原始图像
-      final tempCanvas = html.CanvasElement(width: frameData.width, height: frameData.height);
-      final tempCtx = tempCanvas.context2D;
-      
-      // 2. 将原始图像数据（Uint8List）绘制到临时 Canvas 上
-      final imageData = html.ImageData(
-        frameData.bytes.buffer.asUint8ClampedList(),
-        frameData.width,
-        frameData.height,
-      );
-      tempCtx.putImageData(imageData, 0, 0);
+    // 确保canvas元素已创建
+    _ensureCanvasInitialized(frameData.width, frameData.height);
+    
+    final ctx = _cameraCanvas!.context2D;
+    ctx.clearRect(0, 0, _cameraCanvas!.width!, _cameraCanvas!.height!);
 
-      // 3. 在主 Canvas 上应用变换（镜面翻转）
-      ctx.save();
-      ctx.translate(frameData.width.toDouble(), 0);
-      ctx.scale(-1, 1);
-      
-      // 4. 将临时 Canvas 作为图像源，绘制到主 Canvas 上
-      // drawImage方法会遵循画布的变换，从而实现翻转
-      ctx.drawImage(tempCanvas, 0, 0);
-      
-      // 5. 恢复主 Canvas 状态，防止对后续绘制产生影响
-      ctx.restore();
-
-    }
+    // 直接在Canvas上绘制图像数据
+    final imageData = html.ImageData(
+      frameData.bytes.buffer.asUint8ClampedList(),
+      frameData.width,
+      frameData.height,
+    );
+    ctx.putImageData(imageData, 0, 0);
+  }
 
   void _ensureCanvasInitialized(int width, int height) {
     if (_cameraCanvas == null) {
@@ -198,7 +245,6 @@ class _UnityWebViewPageState extends State<UnityWebViewPage> {
       _cameraCanvas!.height = height;
     }
   }
-
 
   @override
   Widget build(BuildContext context) {
@@ -243,9 +289,12 @@ class _UnityWebViewPageState extends State<UnityWebViewPage> {
     }
     
     // 停止定时器
-    _timer?.cancel();
+    _playerDataTimer?.cancel();
 
     _cameraCanvas?.remove();
+    
+    // 移除消息监听器
+    html.window.removeEventListener('message', _handleUnityMessage);
 
     super.dispose();
   }
