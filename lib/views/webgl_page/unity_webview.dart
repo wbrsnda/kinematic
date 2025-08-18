@@ -207,22 +207,30 @@ class _UnityWebViewPageState extends State<UnityWebViewPage> {
   }
 
   void _displayCurrentFrame() {
-    final VideoFrameData? frameData = getCurrentFrameImageData();
-    if (frameData == null) return;
+      final VideoFrameData? frameData = getCurrentFrameImageData();
+      if (frameData == null) return;
 
-    // 确保canvas元素已创建
-    _ensureCanvasInitialized(frameData.width, frameData.height);
-    
-    final ctx = _cameraCanvas!.context2D;
-    ctx.clearRect(0, 0, _cameraCanvas!.width!, _cameraCanvas!.height!);
+      //实现镜像
+      _ensureCanvasInitialized(frameData.width, frameData.height);
+      final ctx = _cameraCanvas!.context2D;
+      
+      final tempCanvas = html.CanvasElement(width: frameData.width, height: frameData.height);
+      final tempCtx = tempCanvas.context2D;
+      
+      final imageData = html.ImageData(
+        frameData.bytes.buffer.asUint8ClampedList(),
+        frameData.width,
+        frameData.height,
+      );
+      tempCtx.putImageData(imageData, 0, 0);
 
-    // 直接在Canvas上绘制图像数据
-    final imageData = html.ImageData(
-      frameData.bytes.buffer.asUint8ClampedList(),
-      frameData.width,
-      frameData.height,
-    );
-    ctx.putImageData(imageData, 0, 0);
+      ctx.save();
+      ctx.translate(frameData.width.toDouble(), 0);
+      ctx.scale(-1, 1);
+      
+      ctx.drawImage(tempCanvas, 0, 0);
+      
+      ctx.restore();
   }
 
   void _ensureCanvasInitialized(int width, int height) {
