@@ -65,7 +65,7 @@ class JumpRopeRepository extends BaseRepository {
 
     gameplayDuration = 60;
     bufferDuration = 3;
-    settlementCountdown = 10;
+    settlementCountdown = 15;
 
     curframeData = null;
     curFrameID = 0;
