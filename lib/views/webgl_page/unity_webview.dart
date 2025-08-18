@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:jumping_game/data_stream/video_stream_capture.dart';
+import 'package:jumping_game/scene_repository/jump_rope_repository.dart';
 import 'package:jumping_game/features/command_factory.dart';
 import 'package:jumping_game/features/base_command.dart';
 import 'dart:html' as html; 
@@ -35,14 +36,14 @@ class _UnityWebViewPageState extends State<UnityWebViewPage> {
         if (raw is String) {
           final data = jsonDecode(raw) as Map<String, dynamic>;
           
-          hasPerson1   = data['hasPerson1'] as bool;
-          isPrepared1  = data['isPrepared1'] as bool;
-          jumpCount1   = data['jumpCount1'] as int;
-          hasPerson2   = data['hasPerson2'] as bool;
-          isPrepared2  = data['isPrepared2'] as bool;
-          jumpCount2   = data['jumpCount2'] as int;
-          gameStarting = data['gameStarting'] as bool;
-          gameEnded    = data['gameEnded'] as bool;
+          repository.hasPerson1    = data['hasPerson1'] as bool;
+          repository.isPrepared1   = data['isPrepared1'] as bool;
+          repository.jumpCount1    = data['jumpCount1'] as int;
+          repository.hasPerson2    = data['hasPerson2'] as bool;
+          repository.isPrepared2   = data['isPrepared2'] as bool;
+          repository.jumpCount2    = data['jumpCount2'] as int;
+          repository.gameStarting  = data['gameStarting'] as bool;
+          repository.gameEnded     = data['gameEnded'] as bool;
 
           // print('✅ 接收到来自 JS 的数据');
         } else {
@@ -97,14 +98,14 @@ class _UnityWebViewPageState extends State<UnityWebViewPage> {
   // 1) 20 ms 玩家数据循环（立即启动）
   _timer = Timer.periodic(const Duration(milliseconds: 20), (timer) {
     final playerData = {
-      'hasPerson1': hasPerson1,
-      'isPrepared1': isPrepared1,
-      'jumpCount1': jumpCount1,
-      'hasPerson2': hasPerson2,
-      'isPrepared2': isPrepared2,
-      'jumpCount2': jumpCount2,
-      'gameStarting': gameStarting,
-      'gameEnded': gameEnded,
+      'hasPerson1': repository.hasPerson1,
+      'isPrepared1': repository.isPrepared1,
+      'jumpCount1': repository.jumpCount1,
+      'hasPerson2': repository.hasPerson2,
+      'isPrepared2': repository.isPrepared2,
+      'jumpCount2': repository.jumpCount2,
+      'gameStarting': repository.gameStarting,
+      'gameEnded': repository.gameEnded,
     };
     final playerJson = jsonEncode(playerData);
     final iframe = html.document.getElementById('unity-iframe') as html.IFrameElement?;
@@ -118,22 +119,22 @@ class _UnityWebViewPageState extends State<UnityWebViewPage> {
   // 2) 2 秒后一次性发送配置参数
   Timer(const Duration(seconds: 1), () {
     final configData = {
-      'box1PosX': box1PosX,
-      'box1PosY': box1PosY,
-      'box1Width': box1Width,
-      'box1Height': box1Height,
+      'box1PosX': repository.box1PosX,
+      'box1PosY': repository.box1PosY,
+      'box1Width': repository.box1Width,
+      'box1Height': repository.box1Height,
 
-      'box2PosX': box2PosX,
-      'box2PosY': box2PosY,
-      'box2Width': box2Width,
-      'box2Height': box2Height,
+      'box2PosX': repository.box2PosX,
+      'box2PosY': repository.box2PosY,
+      'box2Width': repository.box2Width,
+      'box2Height': repository.box2Height,
 
-      'playerAnimationDuration': playerAnimationDuration,
-      'gameAnimationDuration': gameAnimationDuration,
+      'playerAnimationDuration': repository.playerAnimationDuration,
+      'gameAnimationDuration': repository.gameAnimationDuration,
 
-      'gameplayDuration': gameplayDuration,
-      'bufferDuration': bufferDuration,
-      'settlementCountdown': settlementCountdown,
+      'gameplayDuration': repository.gameplayDuration,
+      'bufferDuration': repository.bufferDuration,
+      'settlementCountdown': repository.settlementCountdown,
     };
     final configJson = jsonEncode(configData);
     final iframe = html.document.getElementById('unity-iframe') as html.IFrameElement?;
@@ -144,25 +145,38 @@ class _UnityWebViewPageState extends State<UnityWebViewPage> {
   });
 }
 
- void _displayCurrentFrame() {
-    final VideoFrameData? frameData = getCurrentFrameImageData();
-    if (frameData == null) return;
+  void _displayCurrentFrame() {
+      final VideoFrameData? frameData = getCurrentFrameImageData();
+      if (frameData == null) return;
 
-    // 确保canvas元素已创建
-    _ensureCanvasInitialized(frameData.width, frameData.height);
-    
-    final ctx = _cameraCanvas!.context2D;
-    ctx.clearRect(0, 0, _cameraCanvas!.width!, _cameraCanvas!.height!);
+      _ensureCanvasInitialized(frameData.width, frameData.height);
+      final ctx = _cameraCanvas!.context2D;
+      
+      // 1. 创建一个临时的 Canvas 来存放原始图像
+      final tempCanvas = html.CanvasElement(width: frameData.width, height: frameData.height);
+      final tempCtx = tempCanvas.context2D;
+      
+      // 2. 将原始图像数据（Uint8List）绘制到临时 Canvas 上
+      final imageData = html.ImageData(
+        frameData.bytes.buffer.asUint8ClampedList(),
+        frameData.width,
+        frameData.height,
+      );
+      tempCtx.putImageData(imageData, 0, 0);
 
-    
-    // 直接在Canvas上绘制图像数据
-    final imageData = html.ImageData(
-      frameData.bytes.buffer.asUint8ClampedList(),
-      frameData.width,
-      frameData.height,
-    );
-    ctx.putImageData(imageData, 0, 0);
-  }
+      // 3. 在主 Canvas 上应用变换（镜面翻转）
+      ctx.save();
+      ctx.translate(frameData.width.toDouble(), 0);
+      ctx.scale(-1, 1);
+      
+      // 4. 将临时 Canvas 作为图像源，绘制到主 Canvas 上
+      // drawImage方法会遵循画布的变换，从而实现翻转
+      ctx.drawImage(tempCanvas, 0, 0);
+      
+      // 5. 恢复主 Canvas 状态，防止对后续绘制产生影响
+      ctx.restore();
+
+    }
 
   void _ensureCanvasInitialized(int width, int height) {
     if (_cameraCanvas == null) {
