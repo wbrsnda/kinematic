@@ -53,11 +53,11 @@
       }
 
       var buildUrl = "Build";
-      var loaderUrl = buildUrl + "/webglx.loader.js";
+      var loaderUrl = buildUrl + "/webglz.loader.js";
       var config = {
-        dataUrl: buildUrl + "/webglx.data",
-        frameworkUrl: buildUrl + "/webglx.framework.js",
-        codeUrl: buildUrl + "/webglx.wasm",
+        dataUrl: buildUrl + "/webglz.data",
+        frameworkUrl: buildUrl + "/webglz.framework.js",
+        codeUrl: buildUrl + "/webglz.wasm",
         streamingAssetsUrl: "StreamingAssets",
         companyName: "DefaultCompany",
         productName: "My project",
@@ -112,7 +112,7 @@
           progressBarFull.style.width = 100 * progress + "%";
         }).then((unityInstance) => {
           loadingBar.style.display = "none";
-         
+          
           //在Unity完全初始化后发送就绪信号
           console.log("Unity实例创建完成，发送就绪信号");
           window.parent.postMessage('unity-ready', '*');
@@ -131,7 +131,7 @@
               console.error('消息处理失败: ' + e);
             }
           });
-
+          
         }).catch((message) => {
           alert(message);
         });

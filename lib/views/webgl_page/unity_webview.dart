@@ -266,20 +266,6 @@ class _UnityWebViewPageState extends State<UnityWebViewPage> {
         child: Stack(
         children: [
           // 使用HtmlElementView来包装DOM元素
-          Positioned.fill(
-            child: IgnorePointer(
-              child: _cameraCanvas != null
-                  ? HtmlElementView(viewType: 'cameraCanvas')
-                  : Container(),
-            ),
-          ),
-          Positioned.fill(
-            child: IgnorePointer(
-              child: _iframe != null
-                  ? HtmlElementView(viewType: 'unity-iframe')
-                  : Container(),
-            ),
-          ),
         ],
       ),
       ),
