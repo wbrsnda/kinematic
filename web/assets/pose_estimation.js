@@ -315,7 +315,6 @@ function registrationPhase() {
       // 规则2：检查是否持续举手3秒
       if (timestamp - st.prepareStartTime >= CONFIG.GAME.PLAYER_ANIMATION_DURATION) {
         st.isLocked = true; // 完成注册，标记为已锁定
-        initBaseline(st);
         console.log(`玩家 '${side}' 已锁定!`);
         triggerFaceRecognition(side);
       }
@@ -381,6 +380,12 @@ function playingPhase() {
   ['left', 'right'].forEach(side => {
     const st = state[side];
     if (!st.isLocked || !st.pose) return; // 未注册或无姿态则跳过
+
+    //在 playing 开始时按需初始化基线
+    if (st.baseline === 0) {
+      initBaseline(st);
+    }
+    
     // 调用封装的跳跃检测函数
     detectJump(st);
   });
