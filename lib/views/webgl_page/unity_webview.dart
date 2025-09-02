@@ -72,6 +72,66 @@ class _UnityWebViewPageState extends State<UnityWebViewPage> {
           repository.gameStarting  = data['gameStarting'] as bool;
           repository.gameEnded     = data['gameEnded'] as bool;
 
+          if (data['type'] == 'faceClear') {
+            final side = (data['side'] as String?) ?? 'left';
+            final player = side == 'left' ? 1 : 2;
+            print('[Flutter→Unity] 清空用户名: $player+');    
+            _sendUserIdToUnity(player, '');                   
+            return; // 处理完直接返回
+          }
+
+          if (data.containsKey('username1')) {
+            final u1raw = data['username1'];
+            final u1 = (u1raw == null) ? '' : u1raw.toString().trim();
+            if (u1.isNotEmpty) {
+              print('[Flutter→Unity] 发送: 1+$u1');
+              _sendUserIdToUnity(1, u1);
+            } else {
+              print('[Flutter→Unity] 清空: 1+');
+              _sendUserIdToUnity(1, '');
+            }
+          }
+          if (data.containsKey('username2')) {
+            final u2raw = data['username2'];
+            final u2 = (u2raw == null) ? '' : u2raw.toString().trim();
+            if (u2.isNotEmpty) {
+              print('[Flutter→Unity] 发送: 2+$u2');
+              _sendUserIdToUnity(2, u2);
+            } else {
+              print('[Flutter→Unity] 清空: 2+');
+              _sendUserIdToUnity(2, '');
+            }
+          }
+
+          if (data['type'] == 'faceLogin') {
+            final side = (data['side'] as String?) ?? 'left';
+            final player = side == 'left' ? 1 : 2;
+            final name = (data['username'] ?? data['realname'] ?? data['userId'] ?? '')
+                .toString()
+                .trim();
+
+            if (name.isNotEmpty) {
+              print('[Flutter→Unity] 发送: $player+$name');
+              _sendUserIdToUnity(player, name);
+            } else {
+              print('[Flutter→Unity] 清空: $player+');
+              _sendUserIdToUnity(player, '');
+            }
+            return; 
+          }
+
+          final u1 = (data['username1'] ?? '').toString().trim();
+          final u2 = (data['username2'] ?? '').toString().trim();
+
+          if (u1.isNotEmpty) {
+            print('[Flutter→Unity] 准备发送: 1+$u1');                     
+            _sendUserIdToUnity(1, u1);                                   
+          }
+          if (u2.isNotEmpty) {
+            print('[Flutter→Unity] 准备发送: 2+$u2');                     
+            _sendUserIdToUnity(2, u2);                                   
+          }
+
           // print('✅ 接收到来自 JS 的数据');
         } else {
           // print('⚠️ 非字符串数据：${event.data}');
@@ -292,4 +352,17 @@ class _UnityWebViewPageState extends State<UnityWebViewPage> {
 
     super.dispose();
   }
+
+  // 发送用户ID到Unity
+  void _sendUserIdToUnity(int playerNumber, String userName) {
+    // 构建用户ID消息，格式为 "1+用户ID" 或 "2+用户ID"
+    final userIdMessage = '$playerNumber+$userName';
+    
+    // 发送消息（如果Unity未准备好则加入队列）
+    _postMessage(userIdMessage);
+    
+    print('发送用户ID到Unity: $userIdMessage');
+  }
+
+  
 }

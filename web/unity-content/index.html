@@ -53,11 +53,11 @@
       }
 
       var buildUrl = "Build";
-      var loaderUrl = buildUrl + "/webglz.loader.js";
+      var loaderUrl = buildUrl + "/webgl.loader.js";
       var config = {
-        dataUrl: buildUrl + "/webglz.data",
-        frameworkUrl: buildUrl + "/webglz.framework.js",
-        codeUrl: buildUrl + "/webglz.wasm",
+        dataUrl: buildUrl + "/webgl.data",
+        frameworkUrl: buildUrl + "/webgl.framework.js",
+        codeUrl: buildUrl + "/webgl.wasm",
         streamingAssetsUrl: "StreamingAssets",
         companyName: "DefaultCompany",
         productName: "My project",
@@ -123,6 +123,8 @@
               console.error('Unity实例未定义，无法处理消息');
               return;
             }
+
+            console.log('即将发给Unity的消息:', event.data);
 
             try {
               // 转发消息给Unity

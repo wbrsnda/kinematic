@@ -17,13 +17,17 @@ const CONFIG = {
     PLAY_DURATION: undefined,
     BUFFER_DURATION: undefined,
     SETTLEMENT_COUNTDOWN: undefined,
-  }
+  },
+  MIRROR_INPUT: true
 };
+
+const mapSideToRoiKey = (side) =>
+  CONFIG.MIRROR_INPUT ? (side === 'left' ? 'RIGHT' : 'LEFT') : side.toUpperCase();
 
 // 状态管理
 const state = {
-  left: { pose: null, baseline: 0, jumps: 0, isLocked: false, lockProgress: 0, hasPerson: false, isPrepared: false, isJumping: false },
-  right: { pose: null, baseline: 0, jumps: 0, isLocked: false, lockProgress: 0, hasPerson: false, isPrepared: false, isJumping: false },
+  left: { pose: null, baseline: 0, jumps: 0, isLocked: false, lockProgress: 0, hasPerson: false, isPrepared: false, isJumping: false , userId: null, username:null },
+  right: { pose: null, baseline: 0, jumps: 0, isLocked: false, lockProgress: 0, hasPerson: false, isPrepared: false, isJumping: false , userId: null, username:null },
   phase: 'registration',     // 当前游戏阶段：registration, playing, ended
   phaseStartTime: 0,         // 阶段开始时间戳
   gameStarting: false,       // 是否已启动倒计时
@@ -154,8 +158,8 @@ function processFrame() {
 
   // 并行处理左右区域
   Promise.all([
-    processROI('left', offLeft, offCtxL, CONFIG.ROI.RIGHT, timestamp),
-    processROI('right', offRight, offCtxR, CONFIG.ROI.LEFT, timestamp)
+    processROI('left',  offLeft,  offCtxL, CONFIG.ROI[mapSideToRoiKey('left')],  timestamp),
+  processROI('right', offRight, offCtxR, CONFIG.ROI[mapSideToRoiKey('right')], timestamp)
   ]).then(() => {
     requestAnimationFrame(processFrame);
   }).catch(handleError);
@@ -290,6 +294,18 @@ function registrationPhase() {
       if (st.isLocked) {
         console.log(`玩家 '${side}' 已锁定但离开。`);
         st.isLocked = false;
+
+        const hadIdentity = st.username != null || st.userId != null;
+        st.userId = null;
+        st.username = null;
+
+        if (hadIdentity) {
+          window.parent.postMessage(JSON.stringify({
+            type: 'faceClear',
+            side
+          }), '*');
+          console.log('[JS→Flutter] faceClear 发送：', { side });
+        }
       }
       // 重置该玩家的准备状态
       st.isPrepared = false;
@@ -315,6 +331,7 @@ function registrationPhase() {
       // 规则2：检查是否持续举手3秒
       if (timestamp - st.prepareStartTime >= CONFIG.GAME.PLAYER_ANIMATION_DURATION) {
         st.isLocked = true; // 完成注册，标记为已锁定
+        initBaseline(st);
         console.log(`玩家 '${side}' 已锁定!`);
         triggerFaceRecognition(side);
       }
@@ -380,12 +397,6 @@ function playingPhase() {
   ['left', 'right'].forEach(side => {
     const st = state[side];
     if (!st.isLocked || !st.pose) return; // 未注册或无姿态则跳过
-
-    //在 playing 开始时按需初始化基线
-    if (st.baseline === 0) {
-      initBaseline(st);
-    }
-    
     // 调用封装的跳跃检测函数
     detectJump(st);
   });
@@ -438,6 +449,10 @@ function endedPhase() {
       st.isJumping = false;
       st.baseline = 0;
       st.pose = null;
+      st.userId = null;
+      st.username = null;
+
+      window.parent.postMessage(JSON.stringify({ type: 'faceClear', side }), '*');
     });
   }
 }
@@ -482,7 +497,7 @@ async function faceLogin(faceFeature) {
  */
 function triggerFaceRecognition(side) {
   // 先在主 canvas 上截取对应 ROI 区域
-  const roi = CONFIG.ROI[side.toUpperCase()];
+  const roi = CONFIG.ROI[mapSideToRoiKey(side)];
   const sx = video.videoWidth * roi.left;
   const sy = video.videoHeight * roi.top;
   const sw = video.videoWidth * (roi.right - roi.left);
@@ -511,7 +526,19 @@ function triggerFaceRecognition(side) {
       faceLogin(res.embedding)
         .then(loginResult => {
           console.log("登录结果:", loginResult);
-          // 这里处理登录成功/失败逻辑
+          const data = (loginResult && loginResult.data) ? loginResult.data : loginResult;
+
+          const st = state[side];
+          st.userId   = data?.userId   ?? data?.userID ?? data?.id ?? null;
+          st.username = data?.username ?? data?.realname ?? st.userId ?? null;
+
+          const payload = {
+            type: 'faceLogin',
+            side,
+            userId:   st.userId,
+            username: st.username
+          };
+          window.parent.postMessage(JSON.stringify(payload), '*');
         })
         .catch(error => {
           console.error("登录流程异常:", error);
@@ -536,7 +563,12 @@ setInterval(() => {
     gameStarting:      state.gameStarting,
     phaseStartTimestamp: state.phaseStartTime,
     gameEnded:         state.gameEnded,
-    gameResult:        state.gameResult
+    gameResult:        state.gameResult,
+
+    username1: state.left.username,
+    username2: state.right.username,
+    userId1:   state.left.userId,
+    userId2:   state.right.userId,
   };
   window.parent.postMessage(JSON.stringify(msg), '*');
 }, 200);

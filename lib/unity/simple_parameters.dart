@@ -115,3 +115,19 @@ void delayedUpdateGameStart() {
     updateGameStarting(true);
   });
 }
+
+void updateUsername1(String? value) {
+  repository.username1 = (value?.trim().isEmpty ?? true) ? null : value!.trim();
+}
+
+void updateUsername2(String? value) {
+  repository.username2 = (value?.trim().isEmpty ?? true) ? null : value!.trim();
+}
+
+void updateUserId1(String? value) {
+  repository.userId1 = (value?.trim().isEmpty ?? true) ? null : value!.trim();
+}
+
+void updateUserId2(String? value) {
+  repository.userId2 = (value?.trim().isEmpty ?? true) ? null : value!.trim();
+}

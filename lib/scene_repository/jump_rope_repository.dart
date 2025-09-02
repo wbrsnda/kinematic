@@ -19,6 +19,13 @@ class JumpRopeRepository extends BaseRepository {
     int jumpCount2 = 0;
     bool gameStarting = false;
     bool gameEnded = false;
+
+    String? username1;  // 左侧/玩家1
+    String? username2;  // 右侧/玩家2
+    String? userId1;    
+    String? userId2;
+
+
     int box1PosX = 0;
     int box1PosY = 0;
     int box1Width = 0;
@@ -27,11 +34,13 @@ class JumpRopeRepository extends BaseRepository {
     int box2PosY = 0;
     int box2Width = 0;
     int box2Height = 0;
+
     int playerAnimationDuration = 0;
     int gameAnimationDuration = 0;
     int gameplayDuration = 0;
     int bufferDuration = 0;
     int settlementCountdown = 0;
+
     video_capture.VideoFrameData? curframeData;
     int curFrameID = 0;
 
@@ -49,6 +58,11 @@ class JumpRopeRepository extends BaseRepository {
     jumpCount2 = 0;
     gameStarting = false;
     gameEnded = false;
+
+    username1 = null;
+    username2 = null;
+    userId1   = null;
+    userId2   = null;
 
     box1PosX = -200;
     box1PosY = 0;
