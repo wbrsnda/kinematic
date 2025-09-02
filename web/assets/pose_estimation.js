@@ -24,6 +24,11 @@ const CONFIG = {
 const mapSideToRoiKey = (side) =>
   CONFIG.MIRROR_INPUT ? (side === 'left' ? 'RIGHT' : 'LEFT') : side.toUpperCase();
 
+const API = {
+  FACE_EXTRACT: 'http://10.1.20.216:8080/test/face',     
+  FACE_LOGIN:   'http://10.1.20.216:8080/auth/login/face'
+};
+
 // 状态管理
 const state = {
   left: { pose: null, baseline: 0, jumps: 0, isLocked: false, lockProgress: 0, hasPerson: false, isPrepared: false, isJumping: false , userId: null, username:null },
@@ -304,7 +309,7 @@ function registrationPhase() {
             type: 'faceClear',
             side
           }), '*');
-          console.log('[JS→Flutter] faceClear 发送：', { side });
+          // console.log('[JS→Flutter] faceClear 发送：', { side });
         }
       }
       // 重置该玩家的准备状态
@@ -470,25 +475,19 @@ async function faceLogin(faceFeature) {
     };
   }
 
+  const url = API.FACE_LOGIN;
   try {
-    const response = await fetch("http://10.1.20.216:8080/auth/login/face", {
+    const resp = await fetch(url, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        faceFeature: faceFeature // 确保字段名与后台一致
-      }),
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ faceFeature })
     });
-
-    // 直接返回原始响应，不处理业务逻辑
-    return await response.json();
+    const json = await resp.json().catch(() => ({}));
+    console.log('[faceLogin] status=', resp.status, 'resp=', json);
+    return json; 
   } catch (error) {
-    console.error("[人脸登录] 网络请求异常:", error);
-    return {
-      code: 500,
-      message: "网络连接失败"
-    };
+    console.error("[faceLogin] 网络请求异常:", { url, error, online: navigator.onLine });
+    return { code: 500, message: "网络连接失败" };
   }
 }
 /**
@@ -496,55 +495,77 @@ async function faceLogin(faceFeature) {
  * 你可以根据 side 去从离屏 Canvas 上裁剪对应区域的 JPEG，再发给后端识别
  */
 function triggerFaceRecognition(side) {
-  // 先在主 canvas 上截取对应 ROI 区域
+  // 1) 先裁剪 ROI
   const roi = CONFIG.ROI[mapSideToRoiKey(side)];
-  const sx = video.videoWidth * roi.left;
+  const sx = video.videoWidth  * roi.left;
   const sy = video.videoHeight * roi.top;
-  const sw = video.videoWidth * (roi.right - roi.left);
+  const sw = video.videoWidth  * (roi.right - roi.left);
   const sh = video.videoHeight * (roi.bottom - roi.top);
 
-  // 创建一个临时离屏 canvas
+  if (sw <= 0 || sh <= 0) {
+    console.warn(`[${side}] ROI 尺寸无效，跳过人脸识别`, roi);
+    return;
+  }
+
   const temp = document.createElement('canvas');
   temp.width = sw;
   temp.height = sh;
   const tctx = temp.getContext('2d');
-
-  // 把当前主视频帧的 ROI 部分绘制到这个离屏
   tctx.drawImage(video, sx, sy, sw, sh, 0, 0, sw, sh);
-  
-  // 转 Base64、调用接口
+
   const faceImage = temp.toDataURL('image/jpeg', 0.8);
-  fetch('http://10.1.20.203:9000/extract', {
+
+  const url = API.FACE_EXTRACT;
+  fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ side, image: faceImage })
   })
-    .then(r => r.json())
-    .then(res => {
-      console.log(`人脸识别 (${side}) 返回：`, res);
-      // TODO: 根据返回结果做后续处理
-      faceLogin(res.embedding)
-        .then(loginResult => {
-          console.log("登录结果:", loginResult);
-          const data = (loginResult && loginResult.data) ? loginResult.data : loginResult;
+  .then(r => r.json())
+  .then(res => {
+    console.log(`人脸识别 (${side}) 返回：`, res);
 
-          const st = state[side];
-          st.userId   = data?.userId   ?? data?.userID ?? data?.id ?? null;
-          st.username = data?.username ?? data?.realname ?? st.userId ?? null;
+    const embedding = res?.data?.embedding ?? res?.embedding ?? null;
+    if (!Array.isArray(embedding) || embedding.length === 0) {
+      console.warn(`[${side}] 提取服务未返回有效 embedding:`, res);
+      return; // 直接结束；也可以在这里安排下一次尝试
+    }
 
-          const payload = {
-            type: 'faceLogin',
-            side,
-            userId:   st.userId,
-            username: st.username
-          };
-          window.parent.postMessage(JSON.stringify(payload), '*');
-        })
-        .catch(error => {
-          console.error("登录流程异常:", error);
-        });
-    })
-    .catch(err => console.error('人脸识别接口调用失败：', err));
+    return faceLogin(embedding);
+  })
+  .then(loginResult => {
+    if (!loginResult) return; // 上一步就失败了
+
+    console.log("登录结果:", loginResult);
+    const data = loginResult?.data ?? loginResult;
+
+    if (loginResult?.code && loginResult.code !== 200) {
+      console.warn(`[${side}] 登录失败 code=${loginResult.code} msg=${loginResult.message}`);
+      return;
+    }
+
+    const st = state[side];
+    st.userId   = data?.userId   ?? data?.userID ?? data?.id ?? null;
+    st.username = data?.username ?? data?.realname ?? st.userId ?? null;
+
+    // 发给 Flutter
+    window.parent.postMessage(JSON.stringify({
+      type: 'faceLogin',
+      side,
+      userId:   st.userId,
+      username: st.username
+    }), '*');
+  })
+  .catch(err => {
+    console.error(`[${side}] 人脸识别接口调用失败:`, { url, err });
+
+    const st = state[side];
+    if (st?.isLocked) {
+      setTimeout(() => {
+        if (st.isLocked) triggerFaceRecognition(side);
+      }, 1500);
+    }
+  });
 }
 
 //传输数据给flutter部分
