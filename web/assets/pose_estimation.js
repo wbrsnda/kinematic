@@ -25,21 +25,25 @@ const mapSideToRoiKey = (side) =>
   CONFIG.MIRROR_INPUT ? (side === 'left' ? 'RIGHT' : 'LEFT') : side.toUpperCase();
 
 const API = {
-  FACE_EXTRACT: 'http://10.1.20.216:8080/test/face',     
-  FACE_LOGIN:   'http://10.1.20.216:8080/auth/login/face'
+  FACE_EXTRACT: 'http://10.1.20.203:9000/extract',     
+  FACE_LOGIN:   'http://10.1.20.216:8080/auth/login/face',
+  FACE_LOGIN_CLIENT: 'http://10.1.20.216:8080/auth/login/face/clientside',
+  ADD_RECORD:   'http://10.1.20.216:8080/api/add',     
+  JWT_TOKEN:    null          
 };
 
 // 状态管理
 const state = {
-  left: { pose: null, baseline: 0, jumps: 0, isLocked: false, lockProgress: 0, hasPerson: false, isPrepared: false, isJumping: false , userId: null, username:null },
-  right: { pose: null, baseline: 0, jumps: 0, isLocked: false, lockProgress: 0, hasPerson: false, isPrepared: false, isJumping: false , userId: null, username:null },
+  left: { pose: null, baseline: 0, jumps: 0, isLocked: false, lockProgress: 0, hasPerson: false, isPrepared: false, isJumping: false , userId: null, username:null , jwtToken: null},
+  right: { pose: null, baseline: 0, jumps: 0, isLocked: false, lockProgress: 0, hasPerson: false, isPrepared: false, isJumping: false , userId: null, username:null , jwtToken: null},
   phase: 'registration',     // 当前游戏阶段：registration, playing, ended
   phaseStartTime: 0,         // 阶段开始时间戳
   gameStarting: false,       // 是否已启动倒计时
   countdownStart: null,      // 倒计时开始时间戳
   gameEnded: false,          // gameEnded 标志
   gameResult: false ,         // 结算结果阶段标志
-  endedStartTime  : 0 // 结算阶段开始时间戳
+  endedStartTime  : 0,       // 结算阶段开始时间戳
+  settlementStartTimeISO: null   //记录结算上报的 startTime ISO，以保证两侧一致且仅上报一次
 };
 
 let video = null;
@@ -50,6 +54,11 @@ let poseRight = null;
 let offLeft = null, offRight = null;
 let offCtxL = null, offCtxR = null;
 let lastTimestamp = 0;
+
+function setAuthToken(token) {
+  API.JWT_TOKEN = token || null;
+}
+window.setAuthToken = setAuthToken;
 
 function updateGameConfig(jsonStringConfig) {
   console.log('⚙️ 收到外部配置原始字符串：', jsonStringConfig);
@@ -74,6 +83,14 @@ function updateGameConfig(jsonStringConfig) {
      CONFIG.ROI.RIGHT.right = externalConfig.roi2.right;
      CONFIG.ROI.RIGHT.bottom = externalConfig.roi2.bottom;
     }
+
+    if (typeof externalConfig.addRecordUrl === 'string') {
+      API.ADD_RECORD = externalConfig.addRecordUrl;
+    }
+    if (typeof externalConfig.jwtToken === 'string') {
+      API.JWT_TOKEN = externalConfig.jwtToken;
+    }
+
     console.log('⚙️ CONFIG 更新后：', CONFIG);
    } catch (e) {
     console.error('❌ 解析外部配置失败：', e, '接收到的字符串：', jsonStringConfig);
@@ -411,6 +428,10 @@ function playingPhase() {
     state.phase = 'ended';
     state.endedStartTime = timestamp;
     state.gameEnded = true;
+
+    // 上报左右两名已识别用户的运动记录
+    state.settlementStartTimeISO = new Date().toISOString();
+    submitSportRecordsForBothSides(state.settlementStartTimeISO);
   }
 }
 
@@ -443,7 +464,9 @@ function endedPhase() {
     state.gameEnded = false;
     state.gameResult = false;
     state.gameStarting = false;    
-    state.countdownStart = null;    
+    state.countdownStart = null;   
+    state.settlementStartTimeISO = null; 
+    
     ['left', 'right'].forEach(side => {
       const st = state[side];
       st.isLocked = false;
@@ -456,6 +479,7 @@ function endedPhase() {
       st.pose = null;
       st.userId = null;
       st.username = null;
+      st.jwtToken = null;
 
       window.parent.postMessage(JSON.stringify({ type: 'faceClear', side }), '*');
     });
@@ -468,26 +492,43 @@ function endedPhase() {
  * @returns {Promise<Object>} - 返回接口原始响应
  */
 async function faceLogin(faceFeature) {
+  
   if (!Array.isArray(faceFeature) || faceFeature.length === 0) {
-    return {
-      code: 400,
-      message: "无效的人脸特征数据"
-    };
+    return { code: 400, message: "无效的人脸特征数据" };
   }
 
-  const url = API.FACE_LOGIN;
-  try {
+  const tryLogin = async (url) => {
     const resp = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ faceFeature })
     });
     const json = await resp.json().catch(() => ({}));
-    console.log('[faceLogin] status=', resp.status, 'resp=', json);
-    return json; 
-  } catch (error) {
-    console.error("[faceLogin] 网络请求异常:", { url, error, online: navigator.onLine });
-    return { code: 500, message: "网络连接失败" };
+    return { resp, json };
+  };
+
+  // 1) 先尝试正式登录（匹配现有用户）
+  try {
+    let { json } = await tryLogin(API.FACE_LOGIN);
+    const data = json?.data ?? json;
+    const matched =
+      json?.code === 200 &&
+      (!!data?.userId || !!data?.userID || !!data?.id || !!data?.userInfo?.userId);
+
+    if (matched) return json;
+
+    // 2) 未匹配到 -> 游客自动注册并登录
+    ({ json } = await tryLogin(API.FACE_LOGIN_CLIENT));
+    return json;
+  } catch (err1) {
+    console.warn("[faceLogin] 正式登录异常，尝试游客登录：", err1);
+    try {
+      const { json } = await tryLogin(API.FACE_LOGIN_CLIENT);
+      return json;
+    } catch (err2) {
+      console.error("[faceLogin] 游客登录也失败：", err2);
+      return { code: 500, message: "网络连接失败" };
+    }
   }
 }
 /**
@@ -545,15 +586,19 @@ function triggerFaceRecognition(side) {
     }
 
     const st = state[side];
-    st.userId   = data?.userId   ?? data?.userID ?? data?.id ?? null;
-    st.username = data?.username ?? data?.realname ?? st.userId ?? null;
+    const userInfo = data?.userInfo ?? data;     // 兼容游客返回(data.userInfo)与正式返回(data)
+    st.userId   = userInfo?.userId   ?? userInfo?.userID ?? userInfo?.id ?? null;
+    st.username = userInfo?.username ?? userInfo?.realname ?? st.userId ?? null;
+    st.jwtToken = data?.token ?? null;           // token 在 data.token
+    const isGuest = userInfo?.isGuest ?? false;
 
     // 发给 Flutter
     window.parent.postMessage(JSON.stringify({
       type: 'faceLogin',
       side,
       userId:   st.userId,
-      username: st.username
+      username: st.username,
+      isGuest
     }), '*');
   })
   .catch(err => {
@@ -566,6 +611,81 @@ function triggerFaceRecognition(side) {
       }, 1500);
     }
   });
+}
+
+//上报运动记录
+function submitSportRecordsForBothSides(startTimeISO) {
+  ['left', 'right'].forEach(side => {
+    const st = state[side];
+    if (!st?.userId) {
+      console.log(`[addRecord] ${side}: userId 为空，跳过上报。`);
+      return;
+    }
+    addSportRecord({
+      side,
+      userId: st.userId,
+      count: st.jumps,
+      startTimeISO,
+      tokenForSide: st.jwtToken || API.JWT_TOKEN || null
+    });
+  });
+}
+
+async function addSportRecord({ side, userId, count, startTimeISO, tokenForSide }) {
+  const url = API.ADD_RECORD;
+
+  // API 文档：duration 单位为秒；CONFIG.GAME.PLAY_DURATION 为毫秒
+  const durationToSend = Math.round((CONFIG.GAME.PLAY_DURATION ?? 0) / 1000);
+
+  const body = {
+    userId,
+    sportType: 'rope_skipping',
+    count,
+    startTime: startTimeISO,       // 例如 "2025-09-01T15:30:00.000Z"
+    duration: durationToSend
+  };
+
+  const headers = { 'Content-Type': 'application/json' };
+  const token = tokenForSide || null;
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  } else {
+    console.warn('[addRecord] 未设置 JWT，将不带 Authorization 头。');
+  }
+
+  try {
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body)
+    });
+    const json = await resp.json().catch(() => ({}));
+
+    const ok = resp.ok && (json?.code === 200 || json?.success === true);
+    console.log(`[addRecord] ${side} status=${resp.status}`, json);
+
+    // 通知宿主（Flutter / 上层容器）
+    window.parent.postMessage(JSON.stringify({
+      type: 'sportRecord',
+      side,
+      request: body,
+      response: json,
+      httpStatus: resp.status,
+      success: ok
+    }), '*');
+
+    return json;
+  } catch (err) {
+    console.error(`[addRecord] ${side} 调用失败:`, { url, err, body });
+    window.parent.postMessage(JSON.stringify({
+      type: 'sportRecord',
+      side,
+      request: body,
+      error: String(err),
+      success: false
+    }), '*');
+    return { code: 500, message: '网络连接失败' };
+  }
 }
 
 //传输数据给flutter部分
@@ -594,42 +714,42 @@ setInterval(() => {
   window.parent.postMessage(JSON.stringify(msg), '*');
 }, 200);
 
-window.addEventListener('message', (event) => {
-  try {
-    const data = JSON.parse(event.data);
+// window.addEventListener('message', (event) => {
+//   try {
+//     const data = JSON.parse(event.data);
 
-    // 左侧面板
-    document.getElementById('leftDebugPanel').innerHTML = `
-      <strong>👤 人物1</strong><br>
-      是否检测到：${data.hasPerson1}<br>
-      是否准备好：${data.isPrepared1}<br>
-      是否锁定：${data.isLocked1}<br>
-      跳跃计数：${data.jumpCount1}<br>
-    `;
+//     // 左侧面板
+//     document.getElementById('leftDebugPanel').innerHTML = `
+//       <strong>👤 人物1</strong><br>
+//       是否检测到：${data.hasPerson1}<br>
+//       是否准备好：${data.isPrepared1}<br>
+//       是否锁定：${data.isLocked1}<br>
+//       跳跃计数：${data.jumpCount1}<br>
+//     `;
 
-    // 右侧面板
-    document.getElementById('rightDebugPanel').innerHTML = `
-      <strong>👤 人物2</strong><br>
-      是否检测到：${data.hasPerson2}<br>
-      是否准备好：${data.isPrepared2}<br>
-      是否锁定：${data.isLocked2}<br>
-      跳跃计数：${data.jumpCount2}<br>
-      <hr>
-      <strong>🎮 游戏状态</strong><br>
-      当前阶段：${state.phase}<br>
-      倒计时开始（注册完成）：${data.gameStarting}<br>
-      是否结束（结算）：${data.gameEnded}<br>
-      结算结果：${data.gameResult}<br>
-      <hr>
-      <strong>⚙️ 当前配置</strong><br>
-      玩家动画时长：${CONFIG.GAME.PLAYER_ANIMATION_DURATION} ms<br>
-      准备倒计时：${CONFIG.GAME.GAME_ANIMATION_DURATION} ms<br>
-      游戏时长：${CONFIG.GAME.PLAY_DURATION} ms<br>
-      缓冲时长：${CONFIG.GAME.BUFFER_DURATION} ms<br>
-      结算倒计时：${CONFIG.GAME.SETTLEMENT_COUNTDOWN} ms<br>
-    `;
-  } catch (e) {
-    console.warn('调试信息解析失败', e);
-  }
-});
+//     // 右侧面板
+//     document.getElementById('rightDebugPanel').innerHTML = `
+//       <strong>👤 人物2</strong><br>
+//       是否检测到：${data.hasPerson2}<br>
+//       是否准备好：${data.isPrepared2}<br>
+//       是否锁定：${data.isLocked2}<br>
+//       跳跃计数：${data.jumpCount2}<br>
+//       <hr>
+//       <strong>🎮 游戏状态</strong><br>
+//       当前阶段：${state.phase}<br>
+//       倒计时开始（注册完成）：${data.gameStarting}<br>
+//       是否结束（结算）：${data.gameEnded}<br>
+//       结算结果：${data.gameResult}<br>
+//       <hr>
+//       <strong>⚙️ 当前配置</strong><br>
+//       玩家动画时长：${CONFIG.GAME.PLAYER_ANIMATION_DURATION} ms<br>
+//       准备倒计时：${CONFIG.GAME.GAME_ANIMATION_DURATION} ms<br>
+//       游戏时长：${CONFIG.GAME.PLAY_DURATION} ms<br>
+//       缓冲时长：${CONFIG.GAME.BUFFER_DURATION} ms<br>
+//       结算倒计时：${CONFIG.GAME.SETTLEMENT_COUNTDOWN} ms<br>
+//     `;
+//   } catch (e) {
+//     console.warn('调试信息解析失败', e);
+//   }
+// });
 
