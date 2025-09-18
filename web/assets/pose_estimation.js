@@ -26,9 +26,9 @@ const mapSideToRoiKey = (side) =>
 
 const API = {
   FACE_EXTRACT: 'http://10.1.20.203:9000/extract',     
-  FACE_LOGIN:   'http://10.1.20.216:8080/auth/login/face',
-  FACE_LOGIN_CLIENT: 'http://10.1.20.216:8080/auth/login/face/clientside',
-  ADD_RECORD:   'http://10.1.20.216:8080/api/add',     
+  FACE_LOGIN:   'http://10.1.20.203/auth/login/face',
+  FACE_LOGIN_CLIENT: 'http://10.1.20.203/auth/login/face/clientside',
+  ADD_RECORD:   'http://10.1.20.203/api/add',     
   JWT_TOKEN:    null          
 };
 
@@ -55,6 +55,69 @@ let offLeft = null, offRight = null;
 let offCtxL = null, offCtxR = null;
 let lastTimestamp = 0;
 
+let ORIGINAL_ROI = null;      // 保存进入 playing 前的原始 ROI（按比例）
+state.roiLocked = false;      // true 表示 playing 阶段保护 top/bottom 不被外部覆盖
+state.pendingROI = null;      // 在 locked 时缓存外部更新，ended 时应用
+
+function deepCopy(obj) {
+  return JSON.parse(JSON.stringify(obj));
+}
+
+function recreateOffscreenCanvases() {
+  if (!video) return;
+  const make = (roi) => {
+    const c = document.createElement('canvas');
+    const w = Math.max(1, Math.round(video.videoWidth  * (roi.right - roi.left)));
+    const h = Math.max(1, Math.round(video.videoHeight * (roi.bottom - roi.top)));
+    c.width = w;
+    c.height = h;
+    return c;
+  };
+  offLeft  = make(CONFIG.ROI.LEFT);
+  offRight = make(CONFIG.ROI.RIGHT);
+  offCtxL = offLeft.getContext('2d');
+  offCtxR = offRight.getContext('2d');
+}
+
+function applyFullHeightROI() {
+  // 第一次进入 playing 时保存原始值
+  if (!ORIGINAL_ROI) ORIGINAL_ROI = deepCopy(CONFIG.ROI);
+
+  // 设置上下占满
+  CONFIG.ROI.LEFT.top    = 0;
+  CONFIG.ROI.LEFT.bottom = 1;
+  CONFIG.ROI.RIGHT.top   = 0;
+  CONFIG.ROI.RIGHT.bottom= 1;
+
+  // 重建离屏 canvas 以匹配新 ROI
+  recreateOffscreenCanvases();
+
+  // 上锁：在 playing 期间保护 top/bottom 不被外部覆盖
+  state.roiLocked = true;
+
+  console.log('[ROI] applyFullHeightROI -> 全高，已上锁');
+}
+
+function restoreROI() {
+  if (!ORIGINAL_ROI) {
+    // 没有保存的原始值则直接返回（幂等）
+    state.roiLocked = false;
+    return;
+  }
+
+  CONFIG.ROI.LEFT.top     = ORIGINAL_ROI.LEFT.top;
+  CONFIG.ROI.LEFT.bottom  = ORIGINAL_ROI.LEFT.bottom;
+  CONFIG.ROI.RIGHT.top    = ORIGINAL_ROI.RIGHT.top;
+  CONFIG.ROI.RIGHT.bottom = ORIGINAL_ROI.RIGHT.bottom;
+
+  recreateOffscreenCanvases();
+
+  // 解锁：允许外部配置生效
+  state.roiLocked = false;
+
+  console.log('[ROI] restoreROI -> 已恢复原始 ROI，已解锁');
+}
+
 function setAuthToken(token) {
   API.JWT_TOKEN = token || null;
 }
@@ -71,17 +134,37 @@ function updateGameConfig(jsonStringConfig) {
     CONFIG.GAME.BUFFER_DURATION           = externalConfig.bufferDuration          ?? CONFIG.GAME.BUFFER_DURATION;
     CONFIG.GAME.SETTLEMENT_COUNTDOWN      = externalConfig.settlementCountdown     ?? CONFIG.GAME.SETTLEMENT_COUNTDOWN;
 
-    if (externalConfig.roi1) {
-     CONFIG.ROI.LEFT.left  = externalConfig.roi1.left;
-     CONFIG.ROI.LEFT.top  = externalConfig.roi1.top;
-     CONFIG.ROI.LEFT.right = externalConfig.roi1.right;
-     CONFIG.ROI.LEFT.bottom = externalConfig.roi1.bottom;
+    if (externalConfig.roi1 || externalConfig.roi2) {
+      const applyROI = (src, dst) => {
+        if (!src) return;
+        // 始终允许水平/颜色调整（left/right/color）
+        if (typeof src.left === 'number')  dst.left = src.left;
+        if (typeof src.right === 'number') dst.right = src.right;
+        if (typeof src.color === 'string') dst.color = src.color;
+
+        // top/bottom 只有在未锁定时才应用
+        if (!state.roiLocked) {
+          if (typeof src.top === 'number')    dst.top = src.top;
+          if (typeof src.bottom === 'number') dst.bottom = src.bottom;
+        } else {
+          // playing 期间：将外部 roi 缓存为 pending（用于 ended 后应用）
+          state.pendingROI = state.pendingROI || {};
+          // 以 roi1/roi2 键保存（与原外部命名一致，便于 later 合并）
+          if (src === externalConfig.roi1) state.pendingROI.roi1 = deepCopy(src);
+          if (src === externalConfig.roi2) state.pendingROI.roi2 = deepCopy(src);
+        }
+      };
+
+      applyROI(externalConfig.roi1, CONFIG.ROI.LEFT);
+      applyROI(externalConfig.roi2, CONFIG.ROI.RIGHT);
+
+      // 如果我们刚刚更新了 CONFIG.ROI（并且未锁定），需要重建离屏 canvas
+      if (!state.roiLocked) recreateOffscreenCanvases();
     }
-    if (externalConfig.roi2) {
-     CONFIG.ROI.RIGHT.left  = externalConfig.roi2.left;
-     CONFIG.ROI.RIGHT.top  = externalConfig.roi2.top;
-     CONFIG.ROI.RIGHT.right = externalConfig.roi2.right;
-     CONFIG.ROI.RIGHT.bottom = externalConfig.roi2.bottom;
+
+    // 如果当前没有上锁，外部配置变更应更新 ORIGINAL_ROI（保持同步，方案B）
+    if (!state.roiLocked) {
+      ORIGINAL_ROI = deepCopy(CONFIG.ROI);
     }
 
     if (typeof externalConfig.addRecordUrl === 'string') {
@@ -115,26 +198,19 @@ window.initPoseEstimator = async function (videoElement, canvasElement) {
 
     // 初始化离屏Canvas
     const init = () => {
+      // 在 canvas.width/height 设置完后（video.readyState >=2 or loadeddata 回调内）
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
 
-      // ROI区域尺寸
-      const createOffscreen = (roi) => {
-        const c = document.createElement('canvas');
-        const width = video.videoWidth * (roi.right - roi.left);
-        const height = video.videoHeight * (roi.bottom - roi.top);
-        c.width = width > 0 ? width : 1; // 确保宽度大于0
-        c.height = height > 0 ? height : 1; // 确保高度大于0
-        return c;
-      };
+      // 保存原始 ROI（按比例）—— 方案B 的关键
+      if (!ORIGINAL_ROI) ORIGINAL_ROI = deepCopy(CONFIG.ROI);
 
-      offLeft = createOffscreen(CONFIG.ROI.LEFT);
-      offRight = createOffscreen(CONFIG.ROI.RIGHT);
-      offCtxL = offLeft.getContext('2d');
-      offCtxR = offRight.getContext('2d');
+      // 根据 CONFIG.ROI 创建离屏 canvas（使用统一函数）
+      recreateOffscreenCanvases();
 
       // 启动循环
       requestAnimationFrame(processFrame);
+
     };
 
     video.readyState >= 2 ? init()
@@ -215,7 +291,7 @@ async function processROI(side, offCanvas, offCtx, roi, timestamp) {
     .detectForVideo(offCanvas, timestamp);
 
    if (result.landmarks.length > 0  && isBigEnough(result.landmarks[0])) {
-    updateState(side, result.landmarks[0], x);
+    updateState(side, result.landmarks[0], x, y);
   }else {
     state[side].pose = null;
   }
@@ -235,23 +311,28 @@ function isBigEnough(landmarks) {
 }
 
 
-function updateState(side, landmarks, offsetX) {
+function updateState(side, landmarks, offsetX, offsetY) {
   const st = state[side];
 
-  // 坐标转换
+  // 选择对应的离屏 canvas（修复 bug）
+  const off = side === 'left' ? offLeft : offRight;
+
+  // 坐标转换：将局部 offCanvas 的归一化坐标映射到全画布归一化坐标
   const converted = landmarks.map(pt => ({
-    x: (pt.x * offLeft.width + offsetX) / canvas.width,
-    y: pt.y,
+    x: (pt.x * off.width + offsetX) / canvas.width,      // 全局归一化 x
+    y: (pt.y * off.height + offsetY) / canvas.height,    // 全局归一化 y（**关键**）
     z: pt.z
   }));
 
-  // 平滑处理
+  // 平滑处理（保持原逻辑）
   st.pose = st.pose ? converted.map((lm, i) => ({
     x: lm.x * 0.3 + st.pose[i].x * 0.7,
     y: lm.y * 0.3 + st.pose[i].y * 0.7,
     z: lm.z * 0.3 + st.pose[i].z * 0.7
   })) : converted;
 }
+
+
 
 function initBaseline(st) {
   const keyPoints = [11, 12, 23, 24];
@@ -401,6 +482,11 @@ function registrationPhase() {
   if (state.gameStarting) {
     const elapsed = timestamp - state.countdownStart;
     if (elapsed >= CONFIG.GAME.GAME_ANIMATION_DURATION) {
+
+      if (!ORIGINAL_ROI) ORIGINAL_ROI = deepCopy(CONFIG.ROI);
+
+      // 将 ROI 设置为上下全高并上锁
+      applyFullHeightROI();
       // console.log("倒计时结束，进入游戏阶段！");
       state.phase = 'playing';
       state.phaseStartTime = timestamp;
@@ -425,6 +511,8 @@ function playingPhase() {
 
   // 判断执行阶段时长，完成后进入结算
   if (timestamp - state.phaseStartTime >= CONFIG.GAME.PLAY_DURATION) {
+    restoreROI();
+
     state.phase = 'ended';
     state.endedStartTime = timestamp;
     state.gameEnded = true;
@@ -458,6 +546,16 @@ function endedPhase() {
     state.gameEnded = true;
     state.gameResult = true;
   } else {
+    if (state.pendingROI) {
+    if (state.pendingROI.roi1) Object.assign(CONFIG.ROI.LEFT, state.pendingROI.roi1);
+    if (state.pendingROI.roi2) Object.assign(CONFIG.ROI.RIGHT, state.pendingROI.roi2);
+    state.pendingROI = null;
+    // 应用后更新 ORIGINAL_ROI（保持同步）
+    ORIGINAL_ROI = deepCopy(CONFIG.ROI);
+    recreateOffscreenCanvases();
+    console.log('[ROI] 已应用 pendingROI（在 ended/reset 时）');
+  }
+
     // 重置至注册阶段
     state.phase = 'registration';
     state.phaseStartTime = timestamp;
@@ -714,42 +812,61 @@ setInterval(() => {
   window.parent.postMessage(JSON.stringify(msg), '*');
 }, 200);
 
-// window.addEventListener('message', (event) => {
-//   try {
-//     const data = JSON.parse(event.data);
+window.addEventListener('message', (event) => {
+  try {
+    // 支持宿主发送字符串或对象
+    const data = (typeof event.data === 'string') ? JSON.parse(event.data) : event.data;
 
-//     // 左侧面板
-//     document.getElementById('leftDebugPanel').innerHTML = `
-//       <strong>👤 人物1</strong><br>
-//       是否检测到：${data.hasPerson1}<br>
-//       是否准备好：${data.isPrepared1}<br>
-//       是否锁定：${data.isLocked1}<br>
-//       跳跃计数：${data.jumpCount1}<br>
-//     `;
+    // 当前 ROI 信息（实时读取 CONFIG）
+    const roiLeft  = CONFIG.ROI.LEFT;
+    const roiRight = CONFIG.ROI.RIGHT;
 
-//     // 右侧面板
-//     document.getElementById('rightDebugPanel').innerHTML = `
-//       <strong>👤 人物2</strong><br>
-//       是否检测到：${data.hasPerson2}<br>
-//       是否准备好：${data.isPrepared2}<br>
-//       是否锁定：${data.isLocked2}<br>
-//       跳跃计数：${data.jumpCount2}<br>
-//       <hr>
-//       <strong>🎮 游戏状态</strong><br>
-//       当前阶段：${state.phase}<br>
-//       倒计时开始（注册完成）：${data.gameStarting}<br>
-//       是否结束（结算）：${data.gameEnded}<br>
-//       结算结果：${data.gameResult}<br>
-//       <hr>
-//       <strong>⚙️ 当前配置</strong><br>
-//       玩家动画时长：${CONFIG.GAME.PLAYER_ANIMATION_DURATION} ms<br>
-//       准备倒计时：${CONFIG.GAME.GAME_ANIMATION_DURATION} ms<br>
-//       游戏时长：${CONFIG.GAME.PLAY_DURATION} ms<br>
-//       缓冲时长：${CONFIG.GAME.BUFFER_DURATION} ms<br>
-//       结算倒计时：${CONFIG.GAME.SETTLEMENT_COUNTDOWN} ms<br>
-//     `;
-//   } catch (e) {
-//     console.warn('调试信息解析失败', e);
-//   }
-// });
+    // 左侧面板
+    const leftPanel = document.getElementById('leftDebugPanel');
+    if (leftPanel) {
+      leftPanel.innerHTML = `
+        <strong>👤 人物1</strong><br>
+        是否检测到：${data.hasPerson1}<br>
+        是否准备好：${data.isPrepared1}<br>
+        是否锁定：${data.isLocked1}<br>
+        跳跃计数：${data.jumpCount1}<br>
+        <hr>
+        <strong>📐 当前 ROI（Left）</strong><br>
+        left: ${roiLeft.left}, top: ${roiLeft.top}, right: ${roiLeft.right}, bottom: ${roiLeft.bottom}<br>
+        color: ${roiLeft.color}<br>
+      `;
+    }
+
+    // 右侧面板
+    const rightPanel = document.getElementById('rightDebugPanel');
+    if (rightPanel) {
+      rightPanel.innerHTML = `
+        <strong>👤 人物2</strong><br>
+        是否检测到：${data.hasPerson2}<br>
+        是否准备好：${data.isPrepared2}<br>
+        是否锁定：${data.isLocked2}<br>
+        跳跃计数：${data.jumpCount2}<br>
+        <hr>
+        <strong>🎮 游戏状态</strong><br>
+        当前阶段：${state.phase}<br>
+        倒计时开始（注册完成）：${data.gameStarting}<br>
+        是否结束（结算）：${data.gameEnded}<br>
+        结算结果：${data.gameResult}<br>
+        <hr>
+        <strong>📐 当前 ROI（Right）</strong><br>
+        left: ${roiRight.left}, top: ${roiRight.top}, right: ${roiRight.right}, bottom: ${roiRight.bottom}<br>
+        color: ${roiRight.color}<br>
+        <hr>
+        <strong>⚙️ 当前配置</strong><br>
+        玩家动画时长：${CONFIG.GAME.PLAYER_ANIMATION_DURATION} ms<br>
+        准备倒计时：${CONFIG.GAME.GAME_ANIMATION_DURATION} ms<br>
+        游戏时长：${CONFIG.GAME.PLAY_DURATION} ms<br>
+        缓冲时长：${CONFIG.GAME.BUFFER_DURATION} ms<br>
+        结算倒计时：${CONFIG.GAME.SETTLEMENT_COUNTDOWN} ms<br>
+      `;
+    }
+  } catch (e) {
+    console.warn('调试信息解析失败或渲染失败', e);
+  }
+});
 
