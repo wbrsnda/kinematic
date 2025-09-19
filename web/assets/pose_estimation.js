@@ -34,8 +34,32 @@ const API = {
 
 // 状态管理
 const state = {
-  left: { pose: null, baseline: 0, jumps: 0, isLocked: false, lockProgress: 0, hasPerson: false, isPrepared: false, isJumping: false , userId: null, username:null , jwtToken: null},
-  right: { pose: null, baseline: 0, jumps: 0, isLocked: false, lockProgress: 0, hasPerson: false, isPrepared: false, isJumping: false , userId: null, username:null , jwtToken: null},
+  left: {
+    pose: null, 
+    baseline: 0,
+    jumps: 0, 
+    isLocked: false,
+    lockProgress: 0, 
+    hasPerson: false, 
+    isPrepared: false, 
+    isJumping: false , 
+    userId: null, 
+    username:null, 
+    jwtToken: null
+  },
+  right: { 
+    pose: null, 
+    baseline: 0, 
+    jumps: 0, 
+    isLocked: false, 
+    lockProgress: 0, 
+    hasPerson: false, 
+    isPrepared: false, 
+    isJumping: false, 
+    userId: null, 
+    username:null , 
+    jwtToken: null
+  },
   phase: 'registration',     // 当前游戏阶段：registration, playing, ended
   phaseStartTime: 0,         // 阶段开始时间戳
   gameStarting: false,       // 是否已启动倒计时
@@ -96,26 +120,6 @@ function applyFullHeightROI() {
   state.roiLocked = true;
 
   console.log('[ROI] applyFullHeightROI -> 全高，已上锁');
-}
-
-function restoreROI() {
-  if (!ORIGINAL_ROI) {
-    // 没有保存的原始值则直接返回（幂等）
-    state.roiLocked = false;
-    return;
-  }
-
-  CONFIG.ROI.LEFT.top     = ORIGINAL_ROI.LEFT.top;
-  CONFIG.ROI.LEFT.bottom  = ORIGINAL_ROI.LEFT.bottom;
-  CONFIG.ROI.RIGHT.top    = ORIGINAL_ROI.RIGHT.top;
-  CONFIG.ROI.RIGHT.bottom = ORIGINAL_ROI.RIGHT.bottom;
-
-  recreateOffscreenCanvases();
-
-  // 解锁：允许外部配置生效
-  state.roiLocked = false;
-
-  console.log('[ROI] restoreROI -> 已恢复原始 ROI，已解锁');
 }
 
 function setAuthToken(token) {
@@ -511,8 +515,7 @@ function playingPhase() {
 
   // 判断执行阶段时长，完成后进入结算
   if (timestamp - state.phaseStartTime >= CONFIG.GAME.PLAY_DURATION) {
-    restoreROI();
-
+    
     state.phase = 'ended';
     state.endedStartTime = timestamp;
     state.gameEnded = true;
@@ -546,15 +549,25 @@ function endedPhase() {
     state.gameEnded = true;
     state.gameResult = true;
   } else {
-    if (state.pendingROI) {
-    if (state.pendingROI.roi1) Object.assign(CONFIG.ROI.LEFT, state.pendingROI.roi1);
-    if (state.pendingROI.roi2) Object.assign(CONFIG.ROI.RIGHT, state.pendingROI.roi2);
-    state.pendingROI = null;
-    // 应用后更新 ORIGINAL_ROI（保持同步）
-    ORIGINAL_ROI = deepCopy(CONFIG.ROI);
-    recreateOffscreenCanvases();
-    console.log('[ROI] 已应用 pendingROI（在 ended/reset 时）');
-  }
+      if (state.pendingROI) {
+      // 先把 ORIGINAL_ROI 恢复到 CONFIG（相当于 restore，但不改变 roiLocked）
+      Object.assign(CONFIG.ROI.LEFT,  ORIGINAL_ROI.LEFT);
+      Object.assign(CONFIG.ROI.RIGHT, ORIGINAL_ROI.RIGHT);
+
+      // 再把 pending 覆盖上去（只会包含外部想修改的字段）
+      if (state.pendingROI.roi1) Object.assign(CONFIG.ROI.LEFT,  state.pendingROI.roi1);
+      if (state.pendingROI.roi2) Object.assign(CONFIG.ROI.RIGHT, state.pendingROI.roi2);
+
+      // 清理 pending 并更新 ORIGINAL_ROI 与离屏 canvas
+      state.pendingROI = null;
+      ORIGINAL_ROI = deepCopy(CONFIG.ROI);
+      recreateOffscreenCanvases();
+
+      // 最后统一解锁（保证在整个应用流程中没有短暂解锁窗口）
+      state.roiLocked = false;
+
+      console.log('[ROI] 已应用 pendingROI（在 ended/reset 时）');
+    }
 
     // 重置至注册阶段
     state.phase = 'registration';
