@@ -334,6 +334,15 @@ function updateState(side, landmarks, offsetX, offsetY) {
     y: lm.y * 0.3 + st.pose[i].y * 0.7,
     z: lm.z * 0.3 + st.pose[i].z * 0.7
   })) : converted;
+
+  if (state.phase === 'playing' && state.recording) {
+    const recordFrame = {
+      t: lastTimestamp,        
+      frameIndex: (state.recordings[side].length || 0),
+      landmarks: converted.map(p => ({ x: p.x, y: p.y, z: p.z })) 
+    };
+    state.recordings[side].push(recordFrame);
+  }
 }
 
 
@@ -506,6 +515,11 @@ function registrationPhase() {
  */
 function playingPhase() {
   const timestamp = generateTimestamp();
+
+  if (!state.recording) {
+    startRecording();
+  }
+
   ['left', 'right'].forEach(side => {
     const st = state[side];
     if (!st.isLocked || !st.pose) return; // 未注册或无姿态则跳过
@@ -522,7 +536,17 @@ function playingPhase() {
 
     // 上报左右两名已识别用户的运动记录
     state.settlementStartTimeISO = new Date().toISOString();
-    submitSportRecordsForBothSides(state.settlementStartTimeISO);
+    submitSportRecordsForBothSides(state.settlementStartTimeISO)
+      .then((results) => {
+        console.log('[submitSportRecordsForBothSides] done', results);
+        // 上传完成后再停止记录并清空内存
+        stopRecordingAndSave();
+      })
+      .catch((err) => {
+        console.error('[submitSportRecordsForBothSides] error', err);
+        // 即便上传失败也调用停止与清理（上层宿主会有失败通知，可安排重试）
+        stopRecordingAndSave();
+      });
   }
 }
 
@@ -726,13 +750,13 @@ function triggerFaceRecognition(side) {
 
 //上报运动记录
 function submitSportRecordsForBothSides(startTimeISO) {
-  ['left', 'right'].forEach(side => {
+  const promises = ['left', 'right'].map(side => {
     const st = state[side];
     if (!st?.userId) {
       console.log(`[addRecord] ${side}: userId 为空，跳过上报。`);
-      return;
+      return Promise.resolve({ skipped: true, side });
     }
-    addSportRecord({
+    return addSportRecord({
       side,
       userId: st.userId,
       count: st.jumps,
@@ -740,63 +764,176 @@ function submitSportRecordsForBothSides(startTimeISO) {
       tokenForSide: st.jwtToken || API.JWT_TOKEN || null
     });
   });
+  // 返回 Promise，在调用处用 .then/.catch 等待完成
+  return Promise.all(promises);
 }
 
 async function addSportRecord({ side, userId, count, startTimeISO, tokenForSide }) {
   const url = API.ADD_RECORD;
 
-  // API 文档：duration 单位为秒；CONFIG.GAME.PLAY_DURATION 为毫秒
-  const durationToSend = Math.round((CONFIG.GAME.PLAY_DURATION ?? 0) / 1000);
-
-  const body = {
-    userId,
-    sportType: 'rope_skipping',
-    count,
-    startTime: startTimeISO,       // 例如 "2025-09-01T15:30:00.000Z"
-    duration: durationToSend
-  };
-
-  const headers = { 'Content-Type': 'application/json' };
-  const token = tokenForSide || null;
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  } else {
-    console.warn('[addRecord] 未设置 JWT，将不带 Authorization 头。');
+  // duration 单位为秒；若没配置 PLAY_DURATION，尝试根据 recording 时间计算
+  let durationToSend = Math.round((CONFIG.GAME.PLAY_DURATION ?? 0) / 1000);
+  if ((!CONFIG.GAME.PLAY_DURATION || CONFIG.GAME.PLAY_DURATION === 0) && state.recordingStartISO) {
+    // 尝试从 recordingStartISO 计算时长（防止未设置 CONFIG）
+    const startMs = Date.parse(state.recordingStartISO) || Date.now();
+    const nowMs = Date.now();
+    durationToSend = Math.max(0, Math.round((nowMs - startMs) / 1000));
   }
 
+  // 准备 NDJSON 字符串（每帧一行 JSON）
+  const frames = state.recordings[side] || [];
+  const ndjson = frames.length ? frames.map(f => JSON.stringify(f)).join('\n') : '';
+
+  // 构造 FormData
+  const formData = new FormData();
+  formData.append('sportType', 'rope_skipping'); // 按需求可替换为 jumping_jacks 等
+  formData.append('count', String(count ?? 0));
+  // API 接受 ISO 字符串或时间戳，这里传 ISO
+  formData.append('startTime', startTimeISO || new Date().toISOString());
+  formData.append('duration', String(durationToSend));
+
+  // poseDataFile 必填：若没有帧，仍上传一个空文件（服务端若要求非空，可按需修改）
+  const filenameSafe = `pose_${side}_${(state.recordingStartISO || new Date().toISOString()).replace(/[:.]/g,'-')}.ndjson`;
+  const poseBlob = new Blob([ndjson], { type: 'application/x-ndjson' });
+  formData.append('poseDataFile', poseBlob, filenameSafe);
+
+  // 准备 headers（不要手动设置 Content-Type，否则 boundary 会丢失）
+  const headers = {};
+  const token = tokenForSide || null;
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  else console.warn('[addRecord] 未设置 JWT，将不带 Authorization 头。');
+
   try {
+    console.log(`[addRecord] 上传 ${side} poseData (${frames.length} frames) -> ${url}`);
+
     const resp = await fetch(url, {
       method: 'POST',
-      headers,
-      body: JSON.stringify(body)
+      headers, // 只携带 Authorization（若有），FormData 会自动设置 Content-Type
+      body: formData,
+      // keepalive 可在页面卸载时尝试完成，但对大文件无效且浏览器对长度有限制
+      // keepalive: true
     });
-    const json = await resp.json().catch(() => ({}));
 
-    const ok = resp.ok && (json?.code === 200 || json?.success === true);
+    const json = await resp.json().catch(() => ({}));
+    const ok = resp.ok && (json?.code === 201 || json?.success === true || json?.code === 200);
+
     console.log(`[addRecord] ${side} status=${resp.status}`, json);
 
-    // 通知宿主（Flutter / 上层容器）
+    // 通知宿主（Flutter / 上层容器） —— 保持原来消息结构
     window.parent.postMessage(JSON.stringify({
       type: 'sportRecord',
       side,
-      request: body,
+      request: {
+        userId,
+        sportType: 'rope_skipping',
+        count,
+        startTime: startTimeISO,
+        duration: durationToSend,
+        poseFile: filenameSafe,
+        framesSent: frames.length
+      },
       response: json,
       httpStatus: resp.status,
       success: ok
     }), '*');
 
+    // 若上传成功，清空该侧记录以释放内存
+    if (ok) {
+      state.recordings[side] = [];
+      console.log(`[addRecord] ${side} recordings cleared after successful upload.`);
+    } else {
+      console.warn(`[addRecord] ${side} upload returned non-OK response. recordings kept for retry.`);
+    }
+
     return json;
   } catch (err) {
-    console.error(`[addRecord] ${side} 调用失败:`, { url, err, body });
+    console.error(`[addRecord] ${side} 调用失败:`, { url, err, payload: { userId, count, startTimeISO }});
+    // 通知宿主上传失败（便于宿主端重试或提示）
     window.parent.postMessage(JSON.stringify({
       type: 'sportRecord',
       side,
-      request: body,
+      request: { userId, sportType: 'rope_skipping', count, startTime: startTimeISO },
       error: String(err),
       success: false
     }), '*');
-    return { code: 500, message: '网络连接失败' };
+    // 不清空 recordings（便于后续重试）
+    return { code: 500, message: '网络连接失败', error: String(err) };
   }
+}
+
+state.recordings = { left: [], right: [] };   // 存放每一帧（内存中）
+state.recording = false;                      // 是否正在记录
+state.recordingStartISO = null;
+
+function frameToSimpleObject(frame) {
+  // frame.landmarks 是 [{x,y,z},...]（全局归一化）
+  return {
+    t: frame.t,            // timestamp (ms) 或 performance.now
+    frameIndex: frame.frameIndex, // 可选 index
+    landmarks: frame.landmarks    // array of coords
+  };
+}
+
+function framesToNDJSON(frames) {
+  return frames.map(f => JSON.stringify(frameToSimpleObject(f))).join('\n');
+}
+
+function framesToJSON(frames) {
+  return JSON.stringify({
+    meta: {
+      startedAt: state.recordingStartISO,
+      frameCount: frames.length,
+      fpsApprox: frames.length / ((frames.length ? (frames[frames.length-1].t - frames[0].t) : 1) / 1000)
+    },
+    frames: frames.map(frameToSimpleObject)
+  }, null, 2);
+}
+
+function framesToCSV(frames) {
+  // header：t,frameIndex, l0_x,l0_y,l0_z, l1_x,...
+  if (frames.length === 0) return '';
+  const lmCount = frames[0].landmarks.length;
+  const headers = ['t','frameIndex'];
+  for (let i=0; i<lmCount; i++) {
+    headers.push(`l${i}_x`, `l${i}_y`, `l${i}_z`);
+  }
+  const lines = [headers.join(',')];
+  for (const f of frames) {
+    const row = [f.t, f.frameIndex];
+    for (const lm of f.landmarks) row.push(lm.x, lm.y, lm.z);
+    lines.push(row.join(','));
+  }
+  return lines.join('\n');
+}
+
+/* ======= 开始/停止记录的控制函数 ======= */
+function startRecording() {
+  state.recordings = { left: [], right: [] };
+  state.recording = true;
+  state.recordingStartISO = new Date().toISOString();
+  console.log('[Recording] started at', state.recordingStartISO);
+}
+
+function stopRecordingAndSave() {
+  // 停止记录（若尚未停止）
+  state.recording = false;
+  const startISO = state.recordingStartISO || new Date().toISOString();
+
+  // 不触发本地下载，改为清理内存（如果 addSportRecord 已在上传成功时清理，则此处只是保险）
+  ['left','right'].forEach(side => {
+    const frames = state.recordings[side] || [];
+    if (!frames || frames.length === 0) {
+      console.log(`[Recording] ${side} no frames or already uploaded, skip clear.`);
+    } else {
+      // 若 recordings 仍然存在（上传失败或未触发上传），一并清理以避免内存泄露
+      console.log(`[Recording] ${side} clearing ${frames.length} frames from memory.`);
+      state.recordings[side] = [];
+    }
+  });
+
+  // 重置 recording 相关元数据
+  state.recordingStartISO = null;
+  console.log('[Recording] stopped and cleared at', new Date().toISOString());
 }
 
 //传输数据给flutter部分
