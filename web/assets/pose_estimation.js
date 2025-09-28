@@ -26,9 +26,9 @@ const mapSideToRoiKey = (side) =>
 
 const API = {
   FACE_EXTRACT: 'http://10.1.20.203:9000/extract',     
-  FACE_LOGIN:   'http://10.1.20.203/auth/login/face',
-  FACE_LOGIN_CLIENT: 'http://10.1.20.203/auth/login/face/clientside',
-  ADD_RECORD:   'http://10.1.20.203/api/add',     
+  FACE_LOGIN:   'http://10.1.20.203:15005/auth/login/face',
+  FACE_LOGIN_CLIENT: 'http://10.1.20.203:15005/auth/login/face/clientside',
+  ADD_RECORD:   'http://10.1.20.203:15005/api/add',     
   JWT_TOKEN:    null          
 };
 
@@ -825,61 +825,61 @@ setInterval(() => {
   window.parent.postMessage(JSON.stringify(msg), '*');
 }, 200);
 
-window.addEventListener('message', (event) => {
-  try {
-    // 支持宿主发送字符串或对象
-    const data = (typeof event.data === 'string') ? JSON.parse(event.data) : event.data;
+// window.addEventListener('message', (event) => {
+//   try {
+//     // 支持宿主发送字符串或对象
+//     const data = (typeof event.data === 'string') ? JSON.parse(event.data) : event.data;
 
-    // 当前 ROI 信息（实时读取 CONFIG）
-    const roiLeft  = CONFIG.ROI.LEFT;
-    const roiRight = CONFIG.ROI.RIGHT;
+//     // 当前 ROI 信息（实时读取 CONFIG）
+//     const roiLeft  = CONFIG.ROI.LEFT;
+//     const roiRight = CONFIG.ROI.RIGHT;
 
-    // 左侧面板
-    const leftPanel = document.getElementById('leftDebugPanel');
-    if (leftPanel) {
-      leftPanel.innerHTML = `
-        <strong>👤 人物1</strong><br>
-        是否检测到：${data.hasPerson1}<br>
-        是否准备好：${data.isPrepared1}<br>
-        是否锁定：${data.isLocked1}<br>
-        跳跃计数：${data.jumpCount1}<br>
-        <hr>
-        <strong>📐 当前 ROI（Left）</strong><br>
-        left: ${roiLeft.left}, top: ${roiLeft.top}, right: ${roiLeft.right}, bottom: ${roiLeft.bottom}<br>
-        color: ${roiLeft.color}<br>
-      `;
-    }
+//     // 左侧面板
+//     const leftPanel = document.getElementById('leftDebugPanel');
+//     if (leftPanel) {
+//       leftPanel.innerHTML = `
+//         <strong>👤 人物1</strong><br>
+//         是否检测到：${data.hasPerson1}<br>
+//         是否准备好：${data.isPrepared1}<br>
+//         是否锁定：${data.isLocked1}<br>
+//         跳跃计数：${data.jumpCount1}<br>
+//         <hr>
+//         <strong>📐 当前 ROI（Left）</strong><br>
+//         left: ${roiLeft.left}, top: ${roiLeft.top}, right: ${roiLeft.right}, bottom: ${roiLeft.bottom}<br>
+//         color: ${roiLeft.color}<br>
+//       `;
+//     }
 
-    // 右侧面板
-    const rightPanel = document.getElementById('rightDebugPanel');
-    if (rightPanel) {
-      rightPanel.innerHTML = `
-        <strong>👤 人物2</strong><br>
-        是否检测到：${data.hasPerson2}<br>
-        是否准备好：${data.isPrepared2}<br>
-        是否锁定：${data.isLocked2}<br>
-        跳跃计数：${data.jumpCount2}<br>
-        <hr>
-        <strong>🎮 游戏状态</strong><br>
-        当前阶段：${state.phase}<br>
-        倒计时开始（注册完成）：${data.gameStarting}<br>
-        是否结束（结算）：${data.gameEnded}<br>
-        结算结果：${data.gameResult}<br>
-        <hr>
-        <strong>📐 当前 ROI（Right）</strong><br>
-        left: ${roiRight.left}, top: ${roiRight.top}, right: ${roiRight.right}, bottom: ${roiRight.bottom}<br>
-        color: ${roiRight.color}<br>
-        <hr>
-        <strong>⚙️ 当前配置</strong><br>
-        玩家动画时长：${CONFIG.GAME.PLAYER_ANIMATION_DURATION} ms<br>
-        准备倒计时：${CONFIG.GAME.GAME_ANIMATION_DURATION} ms<br>
-        游戏时长：${CONFIG.GAME.PLAY_DURATION} ms<br>
-        缓冲时长：${CONFIG.GAME.BUFFER_DURATION} ms<br>
-        结算倒计时：${CONFIG.GAME.SETTLEMENT_COUNTDOWN} ms<br>
-      `;
-    }
-  } catch (e) {
-    console.warn('调试信息解析失败或渲染失败', e);
-  }
-});
+//     // 右侧面板
+//     const rightPanel = document.getElementById('rightDebugPanel');
+//     if (rightPanel) {
+//       rightPanel.innerHTML = `
+//         <strong>👤 人物2</strong><br>
+//         是否检测到：${data.hasPerson2}<br>
+//         是否准备好：${data.isPrepared2}<br>
+//         是否锁定：${data.isLocked2}<br>
+//         跳跃计数：${data.jumpCount2}<br>
+//         <hr>
+//         <strong>🎮 游戏状态</strong><br>
+//         当前阶段：${state.phase}<br>
+//         倒计时开始（注册完成）：${data.gameStarting}<br>
+//         是否结束（结算）：${data.gameEnded}<br>
+//         结算结果：${data.gameResult}<br>
+//         <hr>
+//         <strong>📐 当前 ROI（Right）</strong><br>
+//         left: ${roiRight.left}, top: ${roiRight.top}, right: ${roiRight.right}, bottom: ${roiRight.bottom}<br>
+//         color: ${roiRight.color}<br>
+//         <hr>
+//         <strong>⚙️ 当前配置</strong><br>
+//         玩家动画时长：${CONFIG.GAME.PLAYER_ANIMATION_DURATION} ms<br>
+//         准备倒计时：${CONFIG.GAME.GAME_ANIMATION_DURATION} ms<br>
+//         游戏时长：${CONFIG.GAME.PLAY_DURATION} ms<br>
+//         缓冲时长：${CONFIG.GAME.BUFFER_DURATION} ms<br>
+//         结算倒计时：${CONFIG.GAME.SETTLEMENT_COUNTDOWN} ms<br>
+//       `;
+//     }
+//   } catch (e) {
+//     console.warn('调试信息解析失败或渲染失败', e);
+//   }
+// });
 
