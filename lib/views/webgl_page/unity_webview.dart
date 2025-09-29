@@ -318,7 +318,7 @@ class _UnityWebViewPageState extends State<UnityWebViewPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('Unity in Flutter'),
+        title: Text('Jump System'),
       ),
       body: Container(
         color: Colors.white,
