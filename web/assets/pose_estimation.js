@@ -45,7 +45,9 @@ const state = {
     isJumping: false , 
     userId: null, 
     username:null, 
-    jwtToken: null
+    jwtToken: null,
+    justLanded: false,
+    wasPresent: false,
   },
   right: { 
     pose: null, 
@@ -58,7 +60,9 @@ const state = {
     isJumping: false, 
     userId: null, 
     username:null , 
-    jwtToken: null
+    jwtToken: null,
+    justLanded: false,
+    wasPresent: false,
   },
   phase: 'registration',     // 当前游戏阶段：registration, playing, ended
   phaseStartTime: 0,         // 阶段开始时间戳
@@ -356,14 +360,24 @@ function detectJump(st) {
   const currentY = getBodyCenter(st.pose);
   const threshold = getBodyHeight(st.pose) * 0.07;
 
+  st.justLanded = false;
+
   if (!st.isJumping && (st.baseline - currentY) > threshold) {
     st.isJumping = true;
   }
-
-  if (st.isJumping && (st.baseline - currentY) < threshold * 0.7) {
+  else if (st.isJumping && (st.baseline - currentY) < threshold * 0.7) {
     st.isJumping = false;
     st.jumps++;
-    st.baseline = st.baseline * 0.9 + currentY * 0.1;
+    st.justLanded = true; 
+
+    if (st.justLanded) {
+      const landingAlpha = 0.25;
+      st.baseline = st.baseline * (1 - landingAlpha) + currentY * landingAlpha;
+    } 
+    else if (!st.isJumping) {
+      const standingAlpha = 0.005; 
+      st.baseline = st.baseline * (1 - standingAlpha) + currentY * standingAlpha;
+    }
   }
 }
 
@@ -522,9 +536,28 @@ function playingPhase() {
 
   ['left', 'right'].forEach(side => {
     const st = state[side];
-    if (!st.isLocked || !st.pose) return; // 未注册或无姿态则跳过
-    // 调用封装的跳跃检测函数
-    detectJump(st);
+    const isPresent = !!st.pose;
+
+    if (isPresent) {
+      // 玩家在场
+      if (!st.wasPresent) {
+        initBaseline(st);   
+        st.isJumping = false; 
+      }
+    } else {
+      // 玩家不在场
+      if (st.wasPresent) {
+        st.isJumping = false; 
+      }
+    }
+
+    // 只有当玩家锁定且在场时，才执行跳跃检测
+    if (st.isLocked && isPresent) {
+      detectJump(st);
+    }
+
+    // 在每一帧的最后，更新“上一帧的状态”，为下一帧的比较做准备
+    st.wasPresent = isPresent;
   });
 
   // 判断执行阶段时长，完成后进入结算
@@ -615,6 +648,8 @@ function endedPhase() {
       st.userId = null;
       st.username = null;
       st.jwtToken = null;
+      st.justLanded = false;
+      st.wasPresent = false;
 
       window.parent.postMessage(JSON.stringify({ type: 'faceClear', side }), '*');
     });
